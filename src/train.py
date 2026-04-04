@@ -83,111 +83,114 @@ def _plot_feature_importances(model: XGBClassifier, feature_names: list, output_
 def main() -> None:
     args = parse_args()
 
-    mlflow.xgboost.autolog()
-    mlflow.set_tag("model_type", "XGBoostClassifier")
-    mlflow.set_tag("task", "predictive_maintenance_classification")
-    mlflow.set_tag("dataset", "kaggle/machine-predictive-maintenance")
-    mlflow.log_param("f1_threshold", args.f1_threshold)
+    # Start an explicit MLflow run so that autolog (triggered on model.fit) and
+    # all manual log_param / set_tag / log_metric calls land in the SAME run.
+    with mlflow.start_run():
+        mlflow.xgboost.autolog()
+        mlflow.set_tag("model_type", "XGBoostClassifier")
+        mlflow.set_tag("task", "predictive_maintenance_classification")
+        mlflow.set_tag("dataset", "kaggle/machine-predictive-maintenance")
+        mlflow.log_param("f1_threshold", args.f1_threshold)
 
-    # --- Data loading & feature engineering ---
-    print(f"Loading dataset from: {args.data_path}")
-    df = load_raw(args.data_path)
-    print(f"Dataset shape: {df.shape}")
-    print(f"Class distribution:\n{df['failure_type'].value_counts()}\n")
+        # --- Data loading & feature engineering ---
+        print(f"Loading dataset from: {args.data_path}")
+        df = load_raw(args.data_path)
+        print(f"Dataset shape: {df.shape}")
+        print(f"Class distribution:\n{df['failure_type'].value_counts()}\n")
 
-    X, y, label_encoder = build_feature_matrix(df)
+        X, y, label_encoder = build_feature_matrix(df)
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
-    print(f"Train: {X_train.shape[0]} rows  |  Test: {X_test.shape[0]} rows")
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=y
+        )
+        print(f"Train: {X_train.shape[0]} rows  |  Test: {X_test.shape[0]} rows")
 
-    # --- Model training ---
-    model = XGBClassifier(
-        n_estimators=args.n_estimators,
-        max_depth=args.max_depth,
-        learning_rate=args.learning_rate,
-        subsample=args.subsample,
-        colsample_bytree=args.colsample_bytree,
-        objective="multi:softprob",
-        num_class=len(CLASS_NAMES),
-        eval_metric="mlogloss",
-        random_state=42,
-        n_jobs=-1,
-    )
-    model.fit(
-        X_train,
-        y_train,
-        eval_set=[(X_test, y_test)],
-        verbose=False,
-    )
+        # --- Model training ---
+        model = XGBClassifier(
+            n_estimators=args.n_estimators,
+            max_depth=args.max_depth,
+            learning_rate=args.learning_rate,
+            subsample=args.subsample,
+            colsample_bytree=args.colsample_bytree,
+            objective="multi:softprob",
+            num_class=len(CLASS_NAMES),
+            eval_metric="mlogloss",
+            random_state=42,
+            n_jobs=-1,
+        )
+        model.fit(
+            X_train,
+            y_train,
+            eval_set=[(X_test, y_test)],
+            verbose=False,
+        )
 
-    # --- Evaluation ---
-    y_pred = model.predict(X_test)
-    accuracy = accuracy_score(y_test, y_pred)
-    f1_macro = f1_score(y_test, y_pred, average="macro")
-    f1_weighted = f1_score(y_test, y_pred, average="weighted")
+        # --- Evaluation ---
+        y_pred = model.predict(X_test)
+        accuracy = accuracy_score(y_test, y_pred)
+        f1_macro = f1_score(y_test, y_pred, average="macro")
+        f1_weighted = f1_score(y_test, y_pred, average="weighted")
 
-    mlflow.log_metric("accuracy", accuracy)
-    mlflow.log_metric("f1_macro", f1_macro)
-    mlflow.log_metric("f1_weighted", f1_weighted)
+        mlflow.log_metric("accuracy", accuracy)
+        mlflow.log_metric("f1_macro", f1_macro)
+        mlflow.log_metric("f1_weighted", f1_weighted)
 
-    # Per-class F1 scores
-    per_class_f1 = f1_score(y_test, y_pred, average=None)
-    for cls_name, cls_f1 in zip(CLASS_NAMES, per_class_f1):
-        safe_key = cls_name.lower().replace(" ", "_")
-        mlflow.log_metric(f"f1_{safe_key}", cls_f1)
+        # Per-class F1 scores
+        per_class_f1 = f1_score(y_test, y_pred, average=None)
+        for cls_name, cls_f1 in zip(CLASS_NAMES, per_class_f1):
+            safe_key = cls_name.lower().replace(" ", "_")
+            mlflow.log_metric(f"f1_{safe_key}", cls_f1)
 
-    print("\n=== Evaluation Results ===")
-    print(f"Accuracy      : {accuracy:.4f}")
-    print(f"F1 (macro)    : {f1_macro:.4f}")
-    print(f"F1 (weighted) : {f1_weighted:.4f}")
-    print(f"\nClassification Report:\n{classification_report(y_test, y_pred, target_names=CLASS_NAMES)}")
+        print("\n=== Evaluation Results ===")
+        print(f"Accuracy      : {accuracy:.4f}")
+        print(f"F1 (macro)    : {f1_macro:.4f}")
+        print(f"F1 (weighted) : {f1_weighted:.4f}")
+        print(f"\nClassification Report:\n{classification_report(y_test, y_pred, target_names=CLASS_NAMES)}")
 
-    # --- Artifacts ---
-    output_dir = "./outputs"
-    os.makedirs(output_dir, exist_ok=True)
+        # --- Artifacts ---
+        output_dir = "./outputs"
+        os.makedirs(output_dir, exist_ok=True)
 
-    cm_path = _plot_confusion_matrix(y_test, y_pred, output_dir)
-    fi_path = _plot_feature_importances(model, X.columns.tolist(), output_dir)
-    mlflow.log_artifact(cm_path)
-    mlflow.log_artifact(fi_path)
+        cm_path = _plot_confusion_matrix(y_test, y_pred, output_dir)
+        fi_path = _plot_feature_importances(model, X.columns.tolist(), output_dir)
+        mlflow.log_artifact(cm_path)
+        mlflow.log_artifact(fi_path)
 
-    # Bundle model + metadata into a single pickle so score.py has everything it needs
-    model_bundle = {
-        "model": model,
-        "label_encoder": label_encoder,
-        "class_names": CLASS_NAMES,
-        "feature_columns": FEATURE_COLUMNS,
-    }
-    model_path = os.path.join(output_dir, "model.pkl")
-    with open(model_path, "wb") as f:
-        pickle.dump(model_bundle, f)
-    mlflow.log_artifact(model_path)
+        # Bundle model + metadata into a single pickle so score.py has everything it needs
+        model_bundle = {
+            "model": model,
+            "label_encoder": label_encoder,
+            "class_names": CLASS_NAMES,
+            "feature_columns": FEATURE_COLUMNS,
+        }
+        model_path = os.path.join(output_dir, "model.pkl")
+        with open(model_path, "wb") as f:
+            pickle.dump(model_bundle, f)
+        mlflow.log_artifact(model_path)
 
-    # Metrics JSON — used by ml_train.yml quality gate step
-    metrics = {
-        "accuracy": round(accuracy, 6),
-        "f1_macro": round(f1_macro, 6),
-        "f1_weighted": round(f1_weighted, 6),
-        "f1_threshold": args.f1_threshold,
-        "gate_passed": f1_macro >= args.f1_threshold,
-    }
-    metrics_path = os.path.join(output_dir, "metrics.json")
-    with open(metrics_path, "w") as f:
-        json.dump(metrics, f, indent=2)
-    mlflow.log_artifact(metrics_path)
+        # Metrics JSON — used by ml_train.yml quality gate step
+        metrics = {
+            "accuracy": round(accuracy, 6),
+            "f1_macro": round(f1_macro, 6),
+            "f1_weighted": round(f1_weighted, 6),
+            "f1_threshold": args.f1_threshold,
+            "gate_passed": f1_macro >= args.f1_threshold,
+        }
+        metrics_path = os.path.join(output_dir, "metrics.json")
+        with open(metrics_path, "w") as f:
+            json.dump(metrics, f, indent=2)
+        mlflow.log_artifact(metrics_path)
 
-    print(f"\nArtifacts saved to: {output_dir}")
+        print(f"\nArtifacts saved to: {output_dir}")
 
-    # --- Quality gate ---
-    if f1_macro >= args.f1_threshold:
-        print(f"\n[GATE PASSED] F1-macro {f1_macro:.4f} >= threshold {args.f1_threshold}")
-        print("Model will be registered in Azure ML Model Registry.")
-    else:
-        print(f"\n[GATE FAILED] F1-macro {f1_macro:.4f} < threshold {args.f1_threshold}")
-        print("Model will NOT be registered. Check class imbalance, hyperparameters, or data quality.")
-        raise SystemExit(1)
+        # --- Quality gate ---
+        if f1_macro >= args.f1_threshold:
+            print(f"\n[GATE PASSED] F1-macro {f1_macro:.4f} >= threshold {args.f1_threshold}")
+            print("Model will be registered in Azure ML Model Registry.")
+        else:
+            print(f"\n[GATE FAILED] F1-macro {f1_macro:.4f} < threshold {args.f1_threshold}")
+            print("Model will NOT be registered. Check class imbalance, hyperparameters, or data quality.")
+            raise SystemExit(1)
 
 
 if __name__ == "__main__":

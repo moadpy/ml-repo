@@ -41,6 +41,7 @@ jobs:
 
       - name: Run unit tests
         run: |
+          mkdir -p test-results
           pytest tests/ \
             --tb=short \
             -v \

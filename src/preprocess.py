@@ -77,7 +77,7 @@ def build_feature_matrix(df: pd.DataFrame):
     X = df[FEATURE_COLUMNS].astype(float)
 
     le = LabelEncoder()
-    le.classes_ = np.array(CLASS_NAMES)
+    le.fit(CLASS_NAMES)  # Sets classes_ in sorted order — safe and correct
     y = le.transform(df[TARGET_COLUMN])
 
     return X, y, le

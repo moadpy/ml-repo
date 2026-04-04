@@ -37,8 +37,8 @@ from azure.ai.ml.constants import AssetTypes
 from azure.ai.ml.entities import (
     AmlCompute,
     AzureBlobDatastore,
-    BuildContext,
     CodeConfiguration,
+    Data,
     Environment,
     ManagedOnlineDeployment,
     ManagedOnlineEndpoint,
@@ -157,11 +157,12 @@ def register_dataset(ml_client: MLClient, cfg: dict) -> Input:
 
     print(f"Registering dataset from blob URI: {blob_uri}")
     data_asset = ml_client.data.create_or_update(
-        data={
-            "name": dataset_name,
-            "type": AssetTypes.URI_FILE,
-            "path": blob_uri,
-        }
+        Data(
+            name=dataset_name,
+            type=AssetTypes.URI_FILE,
+            path=blob_uri,
+            description="Predictive maintenance CSV dataset",
+        )
     )
     print(f"Dataset registered: {dataset_name} v{data_asset.version}")
     return Input(type=AssetTypes.URI_FILE, path=data_asset.id)
@@ -176,24 +177,6 @@ def ensure_environment(ml_client: MLClient, cfg: dict) -> str:
     env_name = env_cfg["environment_name"]
     python_version = env_cfg["python_version"]
 
-    # Use Azure ML curated environment as base — avoid building a custom Docker image
-    # This is the lowest-cost approach for dev (no ACR build time or storage).
-    conda_yaml = f"""
-name: predictive-maintenance-env
-channels:
-  - conda-forge
-  - defaults
-dependencies:
-  - python={python_version}
-  - pip:
-    - xgboost==2.0.3
-    - scikit-learn==1.4.2
-    - pandas==2.2.2
-    - numpy==1.26.4
-    - matplotlib==3.8.4
-    - mlflow==2.13.0
-    - azureml-mlflow==1.56.0
-"""
     env = Environment(
         name=env_name,
         description="XGBoost training environment for predictive maintenance",
@@ -288,17 +271,16 @@ def wait_for_job(ml_client: MLClient, job_name: str) -> dict:
         print(f"[ERROR] Job ended with status: {status}")
         sys.exit(1)
 
-    # Download outputs to read metrics.json
+    # Download ALL job outputs/artifacts so we can find metrics.json regardless
+    # of the internal directory structure Azure ML uses for the run.
     with tempfile.TemporaryDirectory() as tmp_dir:
-        ml_client.jobs.download(name=job_name, download_path=tmp_dir, output_name="default")
-        metrics_path = Path(tmp_dir) / "named-outputs" / "default" / "outputs" / "metrics.json"
-        if not metrics_path.exists():
-            # Fallback search
-            for p in Path(tmp_dir).rglob("metrics.json"):
-                metrics_path = p
-                break
+        ml_client.jobs.download(name=job_name, download_path=tmp_dir, all=True)
+        metrics_path = None
+        for p in Path(tmp_dir).rglob("metrics.json"):
+            metrics_path = p
+            break
 
-        if metrics_path.exists():
+        if metrics_path and metrics_path.exists():
             with open(metrics_path) as f:
                 return json.load(f)
 
