@@ -1,0 +1,45 @@
+# ============================================================
+# Development environment — lowest cost configuration
+# ============================================================
+# Cost drivers for dev:
+#   - Compute cluster: 0 min_instances (costs nothing at rest)
+#   - 1 max_instance, Standard_DS2_v2 (~$0.13/hr) — scales up only during job
+#   - Online Endpoint: 1 replica, same VM size (~$0.13/hr while running)
+#   - No VNet / Private Endpoints (no cost, fine for dev)
+#   - No zone redundancy
+# ============================================================
+
+environment: dev
+
+azure:
+  resource_group: rg-mlops-dev
+  location: westeurope
+
+azure_ml:
+  workspace_name: aml-predictive-maintenance-dev
+
+  compute:
+    name: cpu-cluster-dev
+    vm_size: Standard_DS2_v2          # 2 vCPU, 7 GB RAM — enough for 10k rows XGBoost
+    min_instances: 0                  # KEY: scale to zero between jobs → no idle cost
+    max_instances: 1                  # Single node for dev (no parallelism needed)
+    idle_seconds_before_scaledown: 120  # 2 min idle → node released
+
+  training:
+    experiment_name: predictive-maintenance-dev
+    environment_name: predictive-maintenance-env
+    python_version: "3.11"
+    f1_threshold: 0.85               # Minimum F1-macro to register model
+
+  endpoint:
+    name: pm-endpoint-dev
+    deployment_name: blue
+    instance_type: Standard_DS2_v2   # Same VM size (cheapest managed endpoint)
+    instance_count: 1                # Single replica for dev
+
+storage:
+  container_name: ml-data-dev
+  dataset_path: datasets/predictive_maintenance.csv
+  telemetry_prefix: telemetry/
+  procedures_prefix: procedures/
+  prompts_prefix: prompts/

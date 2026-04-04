@@ -1,0 +1,80 @@
+name: Blob Sync — Procedures & Prompts
+
+# Syncs procedures/ and prompts/ to Azure Blob Storage whenever they change.
+# The app-repo's RAG ingestion job reads from this blob container.
+# Branch determines the target storage account:
+#   develop → dev storage account
+#   main    → prod storage account
+
+on:
+  push:
+    branches: [develop, main]
+    paths:
+      - "procedures/**"
+      - "prompts/**"
+
+  workflow_dispatch:
+    inputs:
+      force_sync:
+        description: "Force full sync (even if no files changed)"
+        required: false
+        default: "false"
+        type: choice
+        options: ["true", "false"]
+
+jobs:
+  sync:
+    name: Sync to Blob Storage (${{ github.ref_name }})
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: |
+            {
+              "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
+              "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}",
+              "tenantId": "${{ secrets.AZURE_TENANT_ID }}",
+              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+            }
+
+      - name: Determine target storage account
+        id: storage
+        run: |
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "account=${{ secrets.STORAGE_ACCOUNT_PROD }}" >> $GITHUB_OUTPUT
+            echo "container=ml-data-prod" >> $GITHUB_OUTPUT
+          else
+            echo "account=${{ secrets.STORAGE_ACCOUNT_DEV }}" >> $GITHUB_OUTPUT
+            echo "container=ml-data-dev" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Sync procedures/
+        run: |
+          az storage blob sync \
+            --source procedures/ \
+            --destination procedures/ \
+            --account-name ${{ steps.storage.outputs.account }} \
+            --container ${{ steps.storage.outputs.container }} \
+            --auth-mode login
+
+      - name: Sync prompts/
+        run: |
+          az storage blob sync \
+            --source prompts/ \
+            --destination prompts/ \
+            --account-name ${{ steps.storage.outputs.account }} \
+            --container ${{ steps.storage.outputs.container }} \
+            --auth-mode login
+
+      - name: Print synced files summary
+        run: |
+          echo "=== Synced to ${{ steps.storage.outputs.account }}/${{ steps.storage.outputs.container }} ==="
+          echo "Procedures:"
+          ls -1 procedures/
+          echo "Prompts:"
+          ls -1 prompts/

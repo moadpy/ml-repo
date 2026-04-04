@@ -1,0 +1,54 @@
+name: ML CI — Lint & Unit Tests
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "pipelines/**"
+      - "requirements*.txt"
+
+jobs:
+  lint-and-test:
+    name: Lint + Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Lint with flake8
+        run: |
+          flake8 src/ tests/ pipelines/ \
+            --max-line-length=100 \
+            --extend-ignore=E203,W503
+
+      - name: Type check with mypy (non-blocking)
+        run: mypy src/ --ignore-missing-imports --no-strict-optional || true
+
+      - name: Run unit tests
+        run: |
+          pytest tests/ \
+            --tb=short \
+            -v \
+            --junitxml=test-results/junit.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results/

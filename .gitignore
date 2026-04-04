@@ -1,0 +1,49 @@
+# Dataset — too large for git; download separately via scripts/download_data.py
+data/*.csv
+data/*.zip
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Azure ML job outputs (downloaded locally for debugging)
+outputs/
+mlruns/
+
+# Test results
+test-results/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+!variables.tfvars
+*.tfplan
+
+# Documentation
+AZURE_ARCHITECTURE.md
+POC_GUIDE.md
+platform_deep_dive_v2.md
+
