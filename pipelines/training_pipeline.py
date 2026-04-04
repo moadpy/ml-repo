@@ -101,6 +101,7 @@ def ensure_compute(ml_client: MLClient, cfg: dict) -> str:
             max_instances=compute_cfg["max_instances"],
             idle_time_before_scale_down=compute_cfg["idle_seconds_before_scaledown"],
             tier="Dedicated",
+            location=compute_cfg.get("location", None),  # override region if set in config
         )
         ml_client.compute.begin_create_or_update(cluster).result()
         print(f"Compute cluster '{name}' created.")

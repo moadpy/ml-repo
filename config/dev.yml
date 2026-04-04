@@ -21,6 +21,7 @@ azure_ml:
   compute:
     name: cpu-cluster-dev
     vm_size: Standard_DS2_v2          # 2 vCPU, 7 GB RAM — enough for 10k rows XGBoost
+    location: westeurope              # override: create cluster here, not in workspace region (eastus)
     min_instances: 0                  # KEY: scale to zero between jobs → no idle cost
     max_instances: 1                  # Single node for dev (no parallelism needed)
     idle_seconds_before_scaledown: 120  # 2 min idle → node released
