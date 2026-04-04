@@ -1,9 +1,9 @@
 name: ML Train — Submit Azure ML Job
 
 # Triggered on push to develop (targets dev workspace) or main (targets prod workspace).
-# The dataset CSV must be present in the repo under data/ or downloaded in the job.
-# To deploy the Online Endpoint after training, set the DEPLOY_ENDPOINT env var to "true"
-# in the repository settings or pass --deploy flag manually.
+# Dataset lives in Azure Blob Storage — no data files are committed to this repo.
+# Azure ML fetches the dataset directly from Blob Storage at job runtime.
+# To deploy the Online Endpoint after training, set deploy_endpoint input to "true".
 
 on:
   push:
@@ -12,7 +12,6 @@ on:
       - "src/**"
       - "pipelines/**"
       - "config/**"
-      - "data/**"
 
   workflow_dispatch:
     inputs:
@@ -40,6 +39,7 @@ env:
   AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
   AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
   AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  STORAGE_ACCOUNT_DEV: ${{ secrets.STORAGE_ACCOUNT_DEV }}
 
 jobs:
   train:
@@ -73,16 +73,6 @@ jobs:
             echo "env_label=dev" >> $GITHUB_OUTPUT
           fi
 
-      - name: Check dataset exists
-        run: |
-          if [ ! -f data/predictive_maintenance.csv ]; then
-            echo "::error::Dataset not found at data/predictive_maintenance.csv"
-            echo "Download it from Kaggle: https://www.kaggle.com/datasets/shivamb/machine-predictive-maintenance-classification"
-            echo "Then commit it or use scripts/download_data.py"
-            exit 1
-          fi
-          echo "Dataset found: $(wc -l < data/predictive_maintenance.csv) rows"
-
       - name: Submit Azure ML Training Job
         run: |
           DEPLOY_FLAG=""
@@ -92,7 +82,6 @@ jobs:
 
           python pipelines/training_pipeline.py \
             --config ${{ steps.env-config.outputs.config }} \
-            --data_path data/predictive_maintenance.csv \
             --n_estimators ${{ github.event.inputs.n_estimators || '200' }} \
             --max_depth ${{ github.event.inputs.max_depth || '6' }} \
             --learning_rate ${{ github.event.inputs.learning_rate || '0.1' }} \

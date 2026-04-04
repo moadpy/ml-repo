@@ -18,8 +18,13 @@ output "storage_account_name" {
 }
 
 output "storage_container_name" {
-  description = "Blob container for datasets and ML outputs"
+  description = "Blob container for ML outputs and artifacts"
   value       = azurerm_storage_container.ml_data.name
+}
+
+output "datasets_container_name" {
+  description = "Blob container for raw training datasets (read by Azure ML training jobs)"
+  value       = azurerm_storage_container.datasets.name
 }
 
 output "container_registry_login_server" {
@@ -72,11 +77,15 @@ output "instructions" {
          AZURE_SUBSCRIPTION_ID  = <your subscription id>
          STORAGE_ACCOUNT_DEV    = ${azurerm_storage_account.ml.name}
 
-    2. Download the Kaggle dataset and place it at:
-         data/predictive_maintenance.csv
+    2. Seed the dataset ONCE into Blob Storage (run locally):
+         AZURE_STORAGE_ACCOUNT=${azurerm_storage_account.ml.name} \
+         KAGGLE_USERNAME=<your kaggle username> \
+         KAGGLE_KEY=<your kaggle api key> \
+         python scripts/upload_data.py
 
     3. Trigger the training workflow manually via GitHub Actions
        (ml_train.yml > Run workflow) or push a change to develop branch.
+       NOTE: No Kaggle credentials needed in GitHub Actions secrets.
 
     See POC_GUIDE.md for the full step-by-step walkthrough.
     ============================================================

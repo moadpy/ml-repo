@@ -39,7 +39,14 @@ azure_ml:
 
 storage:
   container_name: ml-data-dev
-  dataset_path: datasets/predictive_maintenance.csv
+  datasets_container: datasets
+  # Registered Azure ML datastore name that maps to the 'datasets' blob container.
+  # Created at runtime by training_pipeline.py if it doesn't already exist.
+  # Storage account name is read from the STORAGE_ACCOUNT_DEV env variable.
+  datastore_name: datasets-datastore
+  # Azure ML datastore URI — training jobs fetch directly from the 'datasets' container.
+  # Format: azureml://datastores/<datastore>/paths/<file>
+  dataset_blob_uri: "azureml://datastores/datasets-datastore/paths/predictive_maintenance.csv"
   telemetry_prefix: telemetry/
   procedures_prefix: procedures/
   prompts_prefix: prompts/

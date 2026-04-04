@@ -3,7 +3,9 @@
 # ===========================================================================
 # What this creates:
 #   1. Resource Group
-#   2. Storage Account + Blob Container  (for the dataset & ML outputs)
+#   2. Storage Account + Blob Containers:
+#        ml-data-dev  → procedures, prompts, telemetry, ML artifacts
+#        datasets     → raw input datasets (read by Azure ML training jobs)
 #   3. Key Vault                         (required by Azure ML)
 #   4. Application Insights              (metrics / logging for the workspace)
 #   5. Log Analytics Workspace           (backend for App Insights)
@@ -62,6 +64,14 @@ resource "azurerm_storage_account" "ml" {
 
 resource "azurerm_storage_container" "ml_data" {
   name                  = var.storage_container_name
+  storage_account_name  = azurerm_storage_account.ml.name
+  container_access_type = "private"
+}
+
+# Dedicated container for raw training datasets — isolated from ML outputs
+# Azure ML training jobs read directly from this container via azureml:// URIs
+resource "azurerm_storage_container" "datasets" {
+  name                  = "datasets"
   storage_account_name  = azurerm_storage_account.ml.name
   container_access_type = "private"
 }

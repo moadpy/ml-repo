@@ -14,7 +14,6 @@ This script is called by ml_train.yml to:
 Usage (called from ml_train.yml):
     python pipelines/training_pipeline.py \
         --config config/dev.yml \
-        --data_path data/predictive_maintenance.csv \
         --deploy                   # optional: also deploy the endpoint
 
 Environment variables expected (set by GitHub Actions):
@@ -22,6 +21,7 @@ Environment variables expected (set by GitHub Actions):
     AZURE_CLIENT_SECRET
     AZURE_TENANT_ID
     AZURE_SUBSCRIPTION_ID
+    STORAGE_ACCOUNT_DEV      (name of the storage account holding the 'datasets' container)
 """
 
 import argparse
@@ -36,6 +36,7 @@ from azure.ai.ml import MLClient, Input, command
 from azure.ai.ml.constants import AssetTypes
 from azure.ai.ml.entities import (
     AmlCompute,
+    AzureBlobDatastore,
     BuildContext,
     CodeConfiguration,
     Environment,
@@ -53,7 +54,6 @@ from azure.identity import ClientSecretCredential
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Submit Azure ML training pipeline")
     p.add_argument("--config", required=True, help="Path to environment config YAML (e.g. config/dev.yml)")
-    p.add_argument("--data_path", required=True, help="Local path to the Kaggle CSV dataset")
     p.add_argument("--deploy", action="store_true", help="Deploy model to Online Endpoint after registration")
     p.add_argument("--n_estimators", type=int, default=200)
     p.add_argument("--max_depth", type=int, default=6)
@@ -109,20 +109,57 @@ def ensure_compute(ml_client: MLClient, cfg: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Datastore registration
+# ---------------------------------------------------------------------------
+
+def ensure_datastore(ml_client: MLClient, cfg: dict) -> None:
+    """Register the 'datasets' blob container as an Azure ML datastore if not present.
+
+    Uses identity-based access (no account key stored) — the service principal
+    already holds the 'Storage Blob Data Contributor' role on the storage account.
+    Storage account name is read from the STORAGE_ACCOUNT_DEV environment variable.
+    """
+    storage_cfg = cfg["storage"]
+    datastore_name = storage_cfg["datastore_name"]
+    container_name = storage_cfg["datasets_container"]
+    account_name = os.environ["STORAGE_ACCOUNT_DEV"]
+
+    try:
+        ml_client.datastores.get(datastore_name)
+        print(f"Datastore '{datastore_name}' already exists.")
+    except Exception:
+        print(f"Registering datastore '{datastore_name}' → container '{container_name}' in '{account_name}' ...")
+        datastore = AzureBlobDatastore(
+            name=datastore_name,
+            description="Raw training datasets (predictive maintenance)",
+            account_name=account_name,
+            container_name=container_name,
+        )
+        ml_client.datastores.create_or_update(datastore)
+        print(f"Datastore '{datastore_name}' registered.")
+
+
+# ---------------------------------------------------------------------------
 # Dataset registration
 # ---------------------------------------------------------------------------
 
-def register_dataset(ml_client: MLClient, cfg: dict, local_csv_path: str) -> Input:
-    """Upload CSV to Blob Storage and register as a versioned Data Asset."""
+def register_dataset(ml_client: MLClient, cfg: dict) -> Input:
+    """Register the Blob Storage URI as a versioned Azure ML Data Asset.
+
+    The CSV already lives in Azure Blob Storage (uploaded once via upload_data.py).
+    We point Azure ML directly at the blob URI — no local file transfer needed.
+    Azure ML will mount/download it on the compute node at job runtime.
+    """
     storage_cfg = cfg["storage"]
     dataset_name = "predictive-maintenance-dataset"
+    blob_uri = storage_cfg["dataset_blob_uri"]
 
-    print(f"Uploading dataset from '{local_csv_path}' ...")
+    print(f"Registering dataset from blob URI: {blob_uri}")
     data_asset = ml_client.data.create_or_update(
         data={
             "name": dataset_name,
             "type": AssetTypes.URI_FILE,
-            "path": local_csv_path,
+            "path": blob_uri,
         }
     )
     print(f"Dataset registered: {dataset_name} v{data_asset.version}")
@@ -347,12 +384,13 @@ def main() -> None:
     print(f"=== Azure ML Training Pipeline ===")
     print(f"Config      : {args.config}")
     print(f"Workspace   : {cfg['azure_ml']['workspace_name']}")
-    print(f"Data path   : {args.data_path}")
+    print(f"Dataset URI : {cfg['storage']['dataset_blob_uri']}")
     print(f"Deploy      : {args.deploy}\n")
 
     ml_client = get_ml_client(cfg)
     compute_name = ensure_compute(ml_client, cfg)
-    dataset_input = register_dataset(ml_client, cfg, args.data_path)
+    ensure_datastore(ml_client, cfg)
+    dataset_input = register_dataset(ml_client, cfg)
     env_ref = ensure_environment(ml_client, cfg)
 
     job = submit_training_job(ml_client, cfg, compute_name, dataset_input, env_ref, args)
