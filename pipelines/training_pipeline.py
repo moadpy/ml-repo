@@ -173,7 +173,7 @@ def register_dataset(ml_client: MLClient, cfg: dict) -> Input:
 # ---------------------------------------------------------------------------
 
 def ensure_environment(ml_client: MLClient, cfg: dict) -> str:
-    env_cfg = cfg["azure_ml"]
+    env_cfg = cfg["azure_ml"]["training"]   # environment_name & python_version live here
     env_name = env_cfg["environment_name"]
     python_version = env_cfg["python_version"]
 
