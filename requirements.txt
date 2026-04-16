@@ -1,11 +1,11 @@
-# Core training dependencies
+# Core training dependencies (also installed in Azure ML environment)
 xgboost==2.0.3
 scikit-learn==1.4.2
 pandas==2.2.2
 numpy==1.26.4
 matplotlib==3.8.4
 
-# MLflow (Azure ML uses its own MLflow tracking server — this provides the client)
+# MLflow — Azure ML uses its own tracking server; this provides the client
 mlflow==2.13.0
 azureml-mlflow==1.56.0
 
@@ -13,5 +13,10 @@ azureml-mlflow==1.56.0
 azure-ai-ml>=1.16.0
 azure-identity>=1.16.0
 
-# Config & utilities
+# RAG indexing (index_knowledge_base.py)
+azure-search-documents>=11.4.0
+azure-storage-blob>=12.19.0
+openai>=1.30.0
+
+# Config
 pyyaml>=6.0

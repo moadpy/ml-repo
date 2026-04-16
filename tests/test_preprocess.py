@@ -1,5 +1,5 @@
 """
-Unit tests for src/preprocess.py
+Unit tests for src/preprocess.py — RCA Incident Signature Classifier
 Run with: pytest tests/
 """
 
@@ -15,9 +15,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../src"))
 from preprocess import (
     CLASS_NAMES,
     FEATURE_COLUMNS,
+    METRIC_ENCODING,
+    all_above_threshold,
     build_feature_matrix,
-    engineer_features,
+    encode_metric_name,
     load_raw,
+    preprocess_alert,
+    safe_divide,
 )
 
 
@@ -26,67 +30,119 @@ from preprocess import (
 # ---------------------------------------------------------------------------
 
 def make_df(**overrides) -> pd.DataFrame:
+    """Minimal valid DataFrame with one row per signature class."""
     base = {
-        "air_temperature_K": [298.1, 305.0, 310.2, 295.5, 302.0, 308.8],
-        "process_temperature_K": [308.6, 315.0, 320.0, 306.0, 312.0, 318.0],
-        "rotational_speed_rpm": [1551, 1400, 1600, 1500, 1450, 1520],
-        "torque_Nm": [42.8, 55.0, 38.5, 48.0, 52.0, 41.0],
-        "tool_wear_min": [108, 200, 50, 150, 30, 180],
-        "type": ["M", "L", "H", "M", "L", "H"],
-        "failure_type": [
-            "No Failure",
-            "Heat Dissipation Failure",
-            "Power Failure",
-            "Overstrain Failure",
-            "Tool Wear Failure",
-            "Random Failures",
+        "timestamp": ["2026-04-01T10:00:00Z"] * 6,
+        "service_name": ["payment-api", "auth-service", "order-service", "inventory-api", "notification-svc", "payment-api"],
+        "breaching_metric": [
+            "db_conn_pool_wait_ms",
+            "memory_percent",
+            "cpu_percent",
+            "http_5xx_rate",
+            "http_5xx_rate",
+            "cpu_percent",
         ],
+        "cpu_percent_avg5":          [15.0, 28.0, 94.0, 80.0, 12.0, 30.0],
+        "memory_percent_avg5":       [52.0, 88.0, 60.0, 82.0, 45.0, 40.0],
+        "http_5xx_rate_avg5":        [8.0,   2.0, 18.0, 35.0, 38.0,  1.5],
+        "db_conn_pool_wait_avg5":    [340.0, 20.0, 45.0, 200.0, 15.0, 10.0],
+        "request_latency_p99_avg5":  [620.0, 140.0, 1200.0, 1500.0, 900.0, 90.0],
+        "incident_signature": [
+            "db_pool_exhaustion",
+            "memory_leak_progressive",
+            "cpu_saturation_burst",
+            "cascade_failure",
+            "network_partition",
+            "normal_noisy",
+        ],
+        "incident_id": ["INC-001", "INC-002", "INC-003", "INC-004", "INC-005", "INC-006"],
     }
     base.update(overrides)
     return pd.DataFrame(base)
 
 
+def make_alert_payload(**overrides) -> dict:
+    payload = {
+        "cpu_percent_avg5": 15.0,
+        "memory_percent_avg5": 52.0,
+        "http_5xx_rate_avg5": 8.0,
+        "db_conn_pool_wait_avg5": 342.0,
+        "request_latency_p99_avg5": 620.0,
+        "breaching_metric": "db_conn_pool_wait_ms",
+    }
+    payload.update(overrides)
+    return payload
+
+
 # ---------------------------------------------------------------------------
-# engineer_features
+# encode_metric_name
 # ---------------------------------------------------------------------------
 
-class TestEngineerFeatures:
-    def test_one_hot_columns_created(self):
-        df = engineer_features(make_df())
-        assert "type_L" in df.columns
-        assert "type_M" in df.columns
-        assert "type_H" in df.columns
+class TestEncodeMetricName:
+    def test_known_metrics_return_expected_codes(self):
+        assert encode_metric_name("db_conn_pool_wait_ms") == 0
+        assert encode_metric_name("cpu_percent") == 1
+        assert encode_metric_name("memory_percent") == 2
+        assert encode_metric_name("http_5xx_rate") == 3
+        assert encode_metric_name("request_latency_p99") == 4
 
-    def test_type_M_encoding(self):
-        df = engineer_features(make_df())
-        m_rows = df[df["type"] == "M"]
-        assert (m_rows["type_M"] == 1).all()
-        assert (m_rows["type_L"] == 0).all()
-        assert (m_rows["type_H"] == 0).all()
+    def test_unknown_metric_returns_fallback(self):
+        assert encode_metric_name("some_new_metric") == 5
+        assert encode_metric_name("") == 5
 
-    def test_type_L_encoding(self):
-        df = engineer_features(make_df())
-        l_rows = df[df["type"] == "L"]
-        assert (l_rows["type_L"] == 1).all()
-        assert (l_rows["type_M"] == 0).all()
+    def test_all_keys_in_encoding_map_are_unique(self):
+        values = list(METRIC_ENCODING.values())
+        assert len(values) == len(set(values))
 
-    def test_type_H_encoding(self):
-        df = engineer_features(make_df())
-        h_rows = df[df["type"] == "H"]
-        assert (h_rows["type_H"] == 1).all()
 
-    def test_missing_category_filled_with_zero(self):
-        # DataFrame with only M and L types — type_H should still exist
-        df = make_df(type=["M", "L", "M", "L", "M", "L"])
-        result = engineer_features(df)
-        assert "type_H" in result.columns
-        assert (result["type_H"] == 0).all()
+# ---------------------------------------------------------------------------
+# safe_divide
+# ---------------------------------------------------------------------------
 
-    def test_original_columns_preserved(self):
-        df = make_df()
-        result = engineer_features(df)
-        for col in ["air_temperature_K", "torque_Nm", "failure_type"]:
-            assert col in result.columns
+class TestSafeDivide:
+    def test_normal_division(self):
+        assert safe_divide(100.0, 4.0) == pytest.approx(25.0)
+
+    def test_zero_denominator_returns_fallback(self):
+        assert safe_divide(100.0, 0.0) == pytest.approx(0.0)
+
+    def test_zero_denominator_custom_fallback(self):
+        assert safe_divide(100.0, 0.0, fallback=99.0) == pytest.approx(99.0)
+
+    def test_both_zero(self):
+        assert safe_divide(0.0, 0.0) == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# all_above_threshold
+# ---------------------------------------------------------------------------
+
+class TestAllAboveThreshold:
+    def test_cascade_failure_all_high(self):
+        # All metrics well above threshold
+        result = all_above_threshold(
+            cpu=85.0, mem=85.0, http5xx=40.0, db_wait=350.0, latency=2000.0
+        )
+        assert result == 1
+
+    def test_normal_all_low(self):
+        result = all_above_threshold(
+            cpu=20.0, mem=40.0, http5xx=1.0, db_wait=15.0, latency=80.0
+        )
+        assert result == 0
+
+    def test_mixed_not_all_above(self):
+        # CPU high but others normal
+        result = all_above_threshold(
+            cpu=95.0, mem=40.0, http5xx=1.0, db_wait=15.0, latency=80.0
+        )
+        assert result == 0
+
+    def test_returns_int(self):
+        result = all_above_threshold(
+            cpu=90.0, mem=90.0, http5xx=40.0, db_wait=400.0, latency=2000.0
+        )
+        assert isinstance(result, int)
 
 
 # ---------------------------------------------------------------------------
@@ -105,27 +161,82 @@ class TestBuildFeatureMatrix:
         X, _, _ = build_feature_matrix(df)
         assert list(X.columns) == FEATURE_COLUMNS
 
-    def test_label_encoding_no_failure(self):
+    def test_all_classes_encoded(self):
         df = make_df()
         _, y, le = build_feature_matrix(df)
-        no_failure_idx = CLASS_NAMES.index("No Failure")
-        assert y[0] == no_failure_idx
-
-    def test_label_encoding_all_classes_covered(self):
-        df = make_df()
-        _, y, _ = build_feature_matrix(df)
-        # All 6 classes should appear exactly once
+        # Should have all 6 unique class indices
         assert len(set(y)) == 6
+
+    def test_label_encoder_fixed_class_order(self):
+        df = make_df()
+        _, _, le = build_feature_matrix(df)
+        assert list(le.classes_) == sorted(CLASS_NAMES)
 
     def test_x_dtype_is_float(self):
         df = make_df()
         X, _, _ = build_feature_matrix(df)
-        assert X.dtypes.apply(lambda d: d == float).all()
+        assert X.dtypes.apply(lambda d: np.issubdtype(d, np.floating)).all()
 
-    def test_label_encoder_classes_fixed(self):
+    def test_derived_db_wait_to_cpu_ratio(self):
+        # For db_pool_exhaustion row: db_wait=340, cpu=15 → ratio ~22.67
         df = make_df()
-        _, _, le = build_feature_matrix(df)
-        assert list(le.classes_) == CLASS_NAMES
+        X, _, _ = build_feature_matrix(df)
+        dpe_row = df[df["incident_signature"] == "db_pool_exhaustion"].index[0]
+        expected_ratio = 340.0 / 15.0
+        assert X.loc[dpe_row, "db_wait_to_cpu_ratio"] == pytest.approx(expected_ratio, rel=1e-3)
+
+    def test_cascade_failure_all_metrics_spike_flag(self):
+        # cascade_failure row has all metrics high → all_metrics_spike should be 1
+        df = make_df()
+        X, _, _ = build_feature_matrix(df)
+        cf_row = df[df["incident_signature"] == "cascade_failure"].index[0]
+        assert X.loc[cf_row, "all_metrics_spike"] == 1
+
+
+# ---------------------------------------------------------------------------
+# preprocess_alert
+# ---------------------------------------------------------------------------
+
+class TestPreprocessAlert:
+    def test_output_columns_match_feature_columns(self):
+        payload = make_alert_payload()
+        X = preprocess_alert(payload)
+        assert list(X.columns) == FEATURE_COLUMNS
+
+    def test_output_shape_single_row(self):
+        payload = make_alert_payload()
+        X = preprocess_alert(payload)
+        assert X.shape == (1, len(FEATURE_COLUMNS))
+
+    def test_output_dtype_float(self):
+        payload = make_alert_payload()
+        X = preprocess_alert(payload)
+        assert X.dtypes.apply(lambda d: np.issubdtype(d, np.floating)).all()
+
+    def test_breaching_metric_encoded(self):
+        payload = make_alert_payload(breaching_metric="db_conn_pool_wait_ms")
+        X = preprocess_alert(payload)
+        assert X["breaching_metric_enc"].iloc[0] == encode_metric_name("db_conn_pool_wait_ms")
+
+    def test_db_wait_to_cpu_ratio_computed(self):
+        payload = make_alert_payload(db_conn_pool_wait_avg5=300.0, cpu_percent_avg5=15.0)
+        X = preprocess_alert(payload)
+        assert X["db_wait_to_cpu_ratio"].iloc[0] == pytest.approx(300.0 / 15.0)
+
+    def test_mem_dominance_computed(self):
+        payload = make_alert_payload(memory_percent_avg5=80.0, cpu_percent_avg5=20.0)
+        X = preprocess_alert(payload)
+        assert X["mem_dominance"].iloc[0] == pytest.approx(80.0 / 21.0)
+
+    def test_unknown_metric_uses_fallback_encoding(self):
+        payload = make_alert_payload(breaching_metric="unknown_new_metric")
+        X = preprocess_alert(payload)
+        assert X["breaching_metric_enc"].iloc[0] == 5
+
+    def test_zero_cpu_does_not_raise(self):
+        payload = make_alert_payload(cpu_percent_avg5=0.0)
+        X = preprocess_alert(payload)  # should not raise ZeroDivisionError
+        assert X["db_wait_to_cpu_ratio"].iloc[0] == pytest.approx(0.0)  # safe_divide fallback
 
 
 # ---------------------------------------------------------------------------
@@ -133,20 +244,57 @@ class TestBuildFeatureMatrix:
 # ---------------------------------------------------------------------------
 
 class TestLoadRaw:
-    def test_kaggle_column_rename(self, tmp_path):
-        csv_content = (
-            "UDI,Product ID,Type,Air temperature [K],Process temperature [K],"
-            "Rotational speed [rpm],Torque [Nm],Tool wear [min],Target,Failure Type\n"
-            "1,M14860,M,298.1,308.6,1551,42.8,108,0,No Failure\n"
-        )
-        csv_file = tmp_path / "test.csv"
-        csv_file.write_text(csv_content)
+    def test_csv_columns_renamed_correctly(self, tmp_path):
+        df = make_df()
+        # Rename back to CSV format for test
+        df_csv = df.rename(columns={
+            "cpu_percent_avg5": "cpu_percent_avg5",
+            "memory_percent_avg5": "memory_percent_avg5",
+        })
+        csv_path = tmp_path / "test.csv"
+        df.to_csv(csv_path, index=False)
 
-        df = load_raw(str(csv_file))
-        assert "air_temperature_K" in df.columns
-        assert "process_temperature_K" in df.columns
-        assert "rotational_speed_rpm" in df.columns
-        assert "torque_Nm" in df.columns
-        assert "tool_wear_min" in df.columns
-        assert "failure_type" in df.columns
-        assert "type" in df.columns
+        loaded = load_raw(str(csv_path))
+        assert "cpu_avg5" in loaded.columns
+        assert "mem_avg5" in loaded.columns
+        assert "http5xx_avg5" in loaded.columns
+        assert "db_wait_avg5" in loaded.columns
+        assert "latency_avg5" in loaded.columns
+
+    def test_original_csv_columns_absent_after_rename(self, tmp_path):
+        df = make_df()
+        csv_path = tmp_path / "test.csv"
+        df.to_csv(csv_path, index=False)
+
+        loaded = load_raw(str(csv_path))
+        assert "cpu_percent_avg5" not in loaded.columns
+        assert "memory_percent_avg5" not in loaded.columns
+
+
+# ---------------------------------------------------------------------------
+# CLASS_NAMES and FEATURE_COLUMNS consistency
+# ---------------------------------------------------------------------------
+
+class TestConstants:
+    def test_class_names_count(self):
+        assert len(CLASS_NAMES) == 6
+
+    def test_feature_columns_count(self):
+        assert len(FEATURE_COLUMNS) == 9
+
+    def test_no_duplicate_class_names(self):
+        assert len(CLASS_NAMES) == len(set(CLASS_NAMES))
+
+    def test_no_duplicate_feature_columns(self):
+        assert len(FEATURE_COLUMNS) == len(set(FEATURE_COLUMNS))
+
+    def test_all_six_signatures_in_class_names(self):
+        expected = {
+            "db_pool_exhaustion",
+            "memory_leak_progressive",
+            "cpu_saturation_burst",
+            "cascade_failure",
+            "network_partition",
+            "normal_noisy",
+        }
+        assert set(CLASS_NAMES) == expected

@@ -3,5 +3,7 @@
 
 pytest>=8.0.0
 pytest-cov>=5.0.0
-flake8>=7.0.0
+ruff>=0.4.0
 mypy>=1.9.0
+semgrep>=1.70.0
+pip-audit>=2.7.0

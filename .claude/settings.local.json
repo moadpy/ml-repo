@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "WebFetch(domain:azure.microsoft.com)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(python src/generate_labeled_incidents.py --n_samples 1500 --output_dir data/rca_poc)",
+      "Bash(python3 src/generate_labeled_incidents.py --n_samples 1500 --output_dir data/rca_poc)",
+      "Bash(pip3 install:*)"
     ]
   }
 }

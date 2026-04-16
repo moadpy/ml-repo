@@ -18,13 +18,13 @@ variable "location" {
 variable "resource_group_name" {
   description = "Name of the resource group"
   type        = string
-  default     = "rg-mlops-dev"
+  default     = "rg-mlops-rca-dev"
 }
 
 variable "workspace_name" {
   description = "Azure ML workspace name"
   type        = string
-  default     = "aml-predictive-maintenance-dev"
+  default     = "aml-rca-dev"
 }
 
 variable "storage_container_name" {

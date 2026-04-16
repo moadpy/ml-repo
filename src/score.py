@@ -1,18 +1,18 @@
 """
-Scoring script for the Azure ML Online Endpoint.
+Scoring script for the Azure ML Online Endpoint — RCA Incident Signature Classifier.
 
 Azure ML calls:
   - init()  once when the endpoint pod starts
   - run()   for every inference request
 
-Input JSON (single record):
+Input JSON (alert payload — single record):
     {
-        "air_temperature_K": 298.1,
-        "process_temperature_K": 308.6,
-        "rotational_speed_rpm": 1551,
-        "torque_Nm": 42.8,
-        "tool_wear_min": 108,
-        "type": "M"
+        "cpu_percent_avg5": 15.0,
+        "memory_percent_avg5": 52.0,
+        "http_5xx_rate_avg5": 8.0,
+        "db_conn_pool_wait_avg5": 342.0,
+        "request_latency_p99_avg5": 620.0,
+        "breaching_metric": "db_conn_pool_wait_ms"
     }
 
 Input JSON (batch — list of records):
@@ -20,16 +20,17 @@ Input JSON (batch — list of records):
 
 Output JSON (single):
     {
-        "failure_type": "Heat Dissipation Failure",
-        "confidence": 0.873,
-        "probabilities": {
-            "No Failure": 0.000,
-            "Heat Dissipation Failure": 0.873,
-            "Power Failure": 0.062,
-            "Overstrain Failure": 0.031,
-            "Tool Wear Failure": 0.020,
-            "Random Failures": 0.014
-        }
+        "incident_signature": "db_pool_exhaustion",
+        "confidence": 0.91,
+        "class_probabilities": {
+            "db_pool_exhaustion": 0.91,
+            "memory_leak_progressive": 0.04,
+            "cascade_failure": 0.03,
+            "cpu_saturation_burst": 0.01,
+            "network_partition": 0.01,
+            "normal_noisy": 0.00
+        },
+        "top_contributing_features": ["db_wait_avg5", "breaching_metric_enc", "db_wait_to_cpu_ratio"]
     }
 """
 
@@ -39,11 +40,15 @@ import os
 import pickle
 
 import numpy as np
-import pandas as pd
+
+from preprocess import preprocess_alert
 
 logger = logging.getLogger(__name__)
 
 _model_bundle = None
+
+# Number of top features to report in output
+_TOP_N_FEATURES = 3
 
 
 def init() -> None:
@@ -59,70 +64,75 @@ def init() -> None:
     with open(model_path, "rb") as f:
         _model_bundle = pickle.load(f)
 
-    logger.info("Model loaded from %s", model_path)
+    logger.info("Model loaded from: %s", model_path)
     logger.info("Classes: %s", _model_bundle["class_names"])
 
 
 def run(raw_data: str) -> str:
-    """Called for each inference request."""
-    try:
-        data = json.loads(raw_data)
-    except (json.JSONDecodeError, TypeError) as e:
-        return json.dumps({"error": f"Invalid JSON input: {e}"})
+    """
+    Called for every inference request.
 
-    records = data if isinstance(data, list) else [data]
+    Parameters
+    ----------
+    raw_data : str — JSON string (single dict or list of dicts)
 
-    try:
-        results = [_predict(rec) for rec in records]
-    except Exception as e:
-        logger.exception("Prediction failed")
-        return json.dumps({"error": str(e)})
+    Returns
+    -------
+    str — JSON string (single result or list of results)
+    """
+    payload = json.loads(raw_data)
 
-    return json.dumps(results[0] if len(results) == 1 else results)
+    if isinstance(payload, list):
+        results = [_classify(record) for record in payload]
+        return json.dumps(results)
+
+    return json.dumps(_classify(payload))
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# Internal
 # ---------------------------------------------------------------------------
 
-def _find_model_file(base_dir: str, filename: str) -> str | None:
-    """Walk base_dir to find the model file (handles nested Azure ML model dirs)."""
+def _classify(alert_payload: dict) -> dict:
+    """Run the classifier on a single alert payload and return structured output."""
+    model = _model_bundle["model"]
+    label_encoder = _model_bundle["label_encoder"]
+    class_names = _model_bundle["class_names"]
+    feature_columns = _model_bundle["feature_columns"]
+
+    X = preprocess_alert(alert_payload)
+
+    # class_proba shape: (1, n_classes)
+    class_proba = model.predict_proba(X)[0]
+    predicted_idx = int(np.argmax(class_proba))
+    predicted_signature = label_encoder.inverse_transform([predicted_idx])[0]
+    confidence = float(class_proba[predicted_idx])
+
+    class_probabilities = {
+        cls: round(float(prob), 4)
+        for cls, prob in zip(class_names, class_proba)
+    }
+
+    top_features = _get_top_features(model, feature_columns, _TOP_N_FEATURES)
+
+    return {
+        "incident_signature": predicted_signature,
+        "confidence": round(confidence, 4),
+        "class_probabilities": class_probabilities,
+        "top_contributing_features": top_features,
+    }
+
+
+def _get_top_features(model, feature_columns: list, top_n: int) -> list:
+    """Return feature names sorted by XGBoost global importance (descending)."""
+    importances = model.feature_importances_
+    idx = np.argsort(importances)[::-1][:top_n]
+    return [feature_columns[i] for i in idx]
+
+
+def _find_model_file(base_dir: str, filename: str):
+    """Search recursively for model file under base_dir."""
     for root, _dirs, files in os.walk(base_dir):
         if filename in files:
             return os.path.join(root, filename)
     return None
-
-
-def _build_feature_row(rec: dict) -> dict:
-    """Convert a raw sensor record into the engineered feature dict."""
-    machine_type = str(rec.get("type", "M")).upper()
-    return {
-        "air_temperature_K": float(rec["air_temperature_K"]),
-        "process_temperature_K": float(rec["process_temperature_K"]),
-        "rotational_speed_rpm": float(rec["rotational_speed_rpm"]),
-        "torque_Nm": float(rec["torque_Nm"]),
-        "tool_wear_min": float(rec["tool_wear_min"]),
-        "type_L": 1.0 if machine_type == "L" else 0.0,
-        "type_M": 1.0 if machine_type == "M" else 0.0,
-        "type_H": 1.0 if machine_type == "H" else 0.0,
-    }
-
-
-def _predict(rec: dict) -> dict:
-    model = _model_bundle["model"]
-    class_names = _model_bundle["class_names"]
-    feature_columns = _model_bundle["feature_columns"]
-
-    row = _build_feature_row(rec)
-    X = pd.DataFrame([row])[feature_columns]
-
-    proba = model.predict_proba(X)[0]
-    predicted_idx = int(np.argmax(proba))
-
-    return {
-        "failure_type": class_names[predicted_idx],
-        "confidence": round(float(proba[predicted_idx]), 6),
-        "probabilities": {
-            cls: round(float(p), 6) for cls, p in zip(class_names, proba)
-        },
-    }

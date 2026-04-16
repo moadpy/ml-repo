@@ -1,19 +1,46 @@
-name: ML CI — Lint & Unit Tests
+name: ML CI Pipeline
 
+# ------------------------------------------------------------------ #
+#  Triggers                                                           #
+#  • PR opened/updated targeting dev or main                          #
+#  • Direct push to dev or main                                       #
+# ------------------------------------------------------------------ #
 on:
   pull_request:
-    branches: [develop, main]
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "pipelines/**"
-      - "requirements*.txt"
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+
+# Cancel any in-progress run for the same ref so pushes don't pile up.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  lint-and-test:
-    name: Lint + Unit Tests
+  # ================================================================= #
+  # 1. SECRET SCAN  — GitLeaks                                         #
+  # ================================================================= #
+  secret-scan:
+    name: "🔑 Secret Scan (GitLeaks)"
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # full history required by gitleaks
 
+      - name: Run GitLeaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ================================================================= #
+  # 2. DEPENDENCY VULNERABILITY SCAN  — pip-audit                     #
+  # ================================================================= #
+  dep-vuln-scan:
+    name: "📦 Dependency Vulnerability Scan (pip-audit)"
+    runs-on: ubuntu-latest
+    needs: secret-scan
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,28 +51,150 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: Install dependencies
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Audit production dependencies
+        # pip-audit exits non-zero if vulnerabilities are found.
+        # We scan requirements.txt only (no dev packages needed in prod).
+        run: |
+          pip-audit \
+            --requirement requirements.txt \
+            --format json \
+            --output pip-audit-results.json || true
+
+      - name: Display audit results
+        run: |
+          python - <<'EOF'
+          import json, sys
+          with open("pip-audit-results.json") as f:
+              data = json.load(f)
+          vulns = data.get("dependencies", [])
+          found = [d for d in vulns if d.get("vulns")]
+          if found:
+              print(f"⚠️  {len(found)} package(s) with vulnerabilities found:")
+              for pkg in found:
+                  for v in pkg["vulns"]:
+                      print(f"  - {pkg['name']}=={pkg['version']}: {v['id']} — {v['description'][:120]}")
+              sys.exit(1)
+          else:
+              print("✅ No known vulnerabilities found.")
+          EOF
+
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-report
+          path: pip-audit-results.json
+
+  # ================================================================= #
+  # 3. SAST  — Semgrep (score.py only)                                #
+  # ================================================================= #
+  sast:
+    name: "🔒 SAST — Semgrep (score.py)"
+    runs-on: ubuntu-latest
+    needs: secret-scan
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Semgrep
+        run: pip install semgrep
+
+      - name: Run Semgrep security scan on score.py
+        # Uses our custom scoring script (--ci = non-interactive, min-score 80)
+        run: |
+          python scripts/security_scan_score.py \
+            --target src/score.py \
+            --min-score 80 \
+            --ci
+
+      - name: Export Semgrep SARIF report
+        if: always()
+        run: |
+          semgrep \
+            --config auto \
+            --sarif \
+            --output semgrep-results.sarif \
+            src/score.py || true
+
+      - name: Upload SARIF to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep-results.sarif
+          category: semgrep
+
+  # ================================================================= #
+  # 4. LINTING  — Ruff                                                 #
+  # ================================================================= #
+  lint:
+    name: "🧹 Lint (Ruff)"
+    runs-on: ubuntu-latest
+    needs: secret-scan
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Ruff
+        run: pip install ruff
+
+      - name: Ruff — check linting
+        run: |
+          ruff check src/ scripts/ tests/ \
+            --output-format=github
+
+      - name: Ruff — check formatting
+        run: |
+          ruff format src/ scripts/ tests/ --check
+
+  # ================================================================= #
+  # 5. UNIT TESTS  — pytest                                            #
+  # ================================================================= #
+  unit-tests:
+    name: "🧪 Unit Tests (pytest)"
+    runs-on: ubuntu-latest
+    needs:
+      - dep-vuln-scan
+      - sast
+      - lint
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install all dependencies
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
-      - name: Lint with flake8
-        run: |
-          flake8 src/ tests/ pipelines/ \
-            --max-line-length=100 \
-            --extend-ignore=E203,W503
-
-      - name: Type check with mypy (non-blocking)
-        run: mypy src/ --ignore-missing-imports --no-strict-optional || true
-
-      - name: Run unit tests
+      - name: Run tests with coverage
         run: |
           mkdir -p test-results
           pytest tests/ \
             --tb=short \
             -v \
-            --junitxml=test-results/junit.xml
+            --junitxml=test-results/junit.xml \
+            --cov=src \
+            --cov-report=xml:test-results/coverage.xml \
+            --cov-report=term-missing
 
       - name: Upload test results
         if: always()
@@ -53,3 +202,10 @@ jobs:
         with:
           name: test-results
           path: test-results/
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: test-results/coverage.xml
