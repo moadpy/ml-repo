@@ -30,10 +30,21 @@ from preprocess import (
 # ---------------------------------------------------------------------------
 
 def make_df(**overrides) -> pd.DataFrame:
-    """Minimal valid DataFrame with one row per signature class."""
+    """Minimal valid DataFrame with one row per signature class.
+
+    Uses the *internal* column names (post load_raw() rename) so that
+    build_feature_matrix() / _derive_features() can find db_wait_avg5 etc.
+    """
     base = {
         "timestamp": ["2026-04-01T10:00:00Z"] * 6,
-        "service_name": ["payment-api", "auth-service", "order-service", "inventory-api", "notification-svc", "payment-api"],
+        "service_name": [
+            "payment-api",
+            "auth-service",
+            "order-service",
+            "inventory-api",
+            "notification-svc",
+            "payment-api",
+        ],
         "breaching_metric": [
             "db_conn_pool_wait_ms",
             "memory_percent",
@@ -42,11 +53,12 @@ def make_df(**overrides) -> pd.DataFrame:
             "http_5xx_rate",
             "cpu_percent",
         ],
-        "cpu_percent_avg5":          [15.0, 28.0, 94.0, 80.0, 12.0, 30.0],
-        "memory_percent_avg5":       [52.0, 88.0, 60.0, 82.0, 45.0, 40.0],
-        "http_5xx_rate_avg5":        [8.0,   2.0, 18.0, 35.0, 38.0,  1.5],
-        "db_conn_pool_wait_avg5":    [340.0, 20.0, 45.0, 200.0, 15.0, 10.0],
-        "request_latency_p99_avg5":  [620.0, 140.0, 1200.0, 1500.0, 900.0, 90.0],
+        # Internal names (after load_raw() rename)
+        "cpu_avg5": [15.0, 28.0, 94.0, 80.0, 12.0, 30.0],
+        "mem_avg5": [52.0, 88.0, 60.0, 82.0, 45.0, 40.0],
+        "http5xx_avg5": [8.0, 2.0, 18.0, 35.0, 38.0, 1.5],
+        "db_wait_avg5": [340.0, 20.0, 45.0, 200.0, 15.0, 10.0],
+        "latency_avg5": [620.0, 140.0, 1200.0, 1500.0, 900.0, 90.0],
         "incident_signature": [
             "db_pool_exhaustion",
             "memory_leak_progressive",
@@ -181,9 +193,9 @@ class TestBuildFeatureMatrix:
         # For db_pool_exhaustion row: db_wait=340, cpu=15 → ratio ~22.67
         df = make_df()
         X, _, _ = build_feature_matrix(df)
-        dpe_row = df[df["incident_signature"] == "db_pool_exhaustion"].index[0]
+        dpe_idx = df[df["incident_signature"] == "db_pool_exhaustion"].index[0]
         expected_ratio = 340.0 / 15.0
-        assert X.loc[dpe_row, "db_wait_to_cpu_ratio"] == pytest.approx(expected_ratio, rel=1e-3)
+        assert X.loc[dpe_idx, "db_wait_to_cpu_ratio"] == pytest.approx(expected_ratio, rel=1e-3)
 
     def test_cascade_failure_all_metrics_spike_flag(self):
         # cascade_failure row has all metrics high → all_metrics_spike should be 1
@@ -244,10 +256,27 @@ class TestPreprocessAlert:
 # ---------------------------------------------------------------------------
 
 class TestLoadRaw:
+    def _make_csv_df(self) -> pd.DataFrame:
+        """Build a DataFrame with raw CSV column names (pre-rename) for load_raw tests."""
+        return pd.DataFrame(
+            {
+                "timestamp": ["2026-04-01T10:00:00Z"] * 2,
+                "service_name": ["payment-api", "auth-service"],
+                "breaching_metric": ["db_conn_pool_wait_ms", "memory_percent"],
+                "cpu_percent_avg5": [15.0, 28.0],
+                "memory_percent_avg5": [52.0, 88.0],
+                "http_5xx_rate_avg5": [8.0, 2.0],
+                "db_conn_pool_wait_avg5": [340.0, 20.0],
+                "request_latency_p99_avg5": [620.0, 140.0],
+                "incident_signature": ["db_pool_exhaustion", "memory_leak_progressive"],
+                "incident_id": ["INC-001", "INC-002"],
+            }
+        )
+
     def test_csv_columns_renamed_correctly(self, tmp_path):
-        df = make_df()
+        df_csv = self._make_csv_df()
         csv_path = tmp_path / "test.csv"
-        df.to_csv(csv_path, index=False)
+        df_csv.to_csv(csv_path, index=False)
 
         loaded = load_raw(str(csv_path))
         assert "cpu_avg5" in loaded.columns
@@ -257,9 +286,9 @@ class TestLoadRaw:
         assert "latency_avg5" in loaded.columns
 
     def test_original_csv_columns_absent_after_rename(self, tmp_path):
-        df = make_df()
+        df_csv = self._make_csv_df()
         csv_path = tmp_path / "test.csv"
-        df.to_csv(csv_path, index=False)
+        df_csv.to_csv(csv_path, index=False)
 
         loaded = load_raw(str(csv_path))
         assert "cpu_percent_avg5" not in loaded.columns

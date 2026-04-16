@@ -80,22 +80,38 @@ import score  # noqa: E402  (must come after stub registration)
 # Helpers to build a fake model bundle
 # ---------------------------------------------------------------------------
 
+class _FakeModel:
+    """
+    Minimal picklable model that mimics the XGBoost classifier interface.
+    Used in tests that call pickle.dump() (i.e. TestInit).
+    """
+
+    def __init__(self, predicted_class_idx: int = 2):
+        self._predicted_class_idx = predicted_class_idx
+        self.feature_importances_ = np.linspace(0.01, 0.5, N_FEATURES)
+
+    def predict_proba(self, X):
+        proba = np.zeros((1, N_CLASSES))
+        proba[0, self._predicted_class_idx] = 0.91
+        rest = (1 - 0.91) / (N_CLASSES - 1)
+        for i in range(N_CLASSES):
+            if i != self._predicted_class_idx:
+                proba[0, i] = rest
+        return proba
+
+
 def _make_model_bundle(predicted_class_idx: int = 2) -> dict:
-    """Return a dict that mimics what train.py saves in model.pkl."""
+    """Bundle with MagicMock model — fast, NOT picklable. Use for run/classify tests."""
     mock_model = MagicMock()
 
-    # predict_proba returns shape (1, N_CLASSES)
     proba = np.zeros((1, N_CLASSES))
     proba[0, predicted_class_idx] = 0.91
-    # Spread remaining probability
     rest = (1 - 0.91) / (N_CLASSES - 1)
     for i in range(N_CLASSES):
         if i != predicted_class_idx:
             proba[0, i] = rest
 
     mock_model.predict_proba = MagicMock(return_value=proba)
-
-    # Feature importances — ascending so top feature is last column
     mock_model.feature_importances_ = np.linspace(0.01, 0.5, N_FEATURES)
 
     from sklearn.preprocessing import LabelEncoder
@@ -105,6 +121,21 @@ def _make_model_bundle(predicted_class_idx: int = 2) -> dict:
 
     return {
         "model": mock_model,
+        "label_encoder": le,
+        "class_names": CLASS_NAMES,
+        "feature_columns": FEATURE_COLUMNS,
+    }
+
+
+def _make_model_bundle_picklable(predicted_class_idx: int = 2) -> dict:
+    """Bundle with a real picklable _FakeModel — required for init() / pickle tests."""
+    from sklearn.preprocessing import LabelEncoder
+
+    le = LabelEncoder()
+    le.fit(CLASS_NAMES)
+
+    return {
+        "model": _FakeModel(predicted_class_idx),
         "label_encoder": le,
         "class_names": CLASS_NAMES,
         "feature_columns": FEATURE_COLUMNS,
@@ -141,7 +172,7 @@ class TestFindModelFile:
 
 class TestInit:
     def test_init_loads_bundle_from_env(self, tmp_path, monkeypatch):
-        bundle = _make_model_bundle()
+        bundle = _make_model_bundle_picklable()  # must be picklable for pickle.dump
         pkl_path = tmp_path / "model.pkl"
         with open(pkl_path, "wb") as f:
             pickle.dump(bundle, f)
