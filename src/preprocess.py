@@ -13,7 +13,6 @@ Incident signatures (6 classes):
   cascade_failure, network_partition, normal_noisy
 """
 
-import numpy as np
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 

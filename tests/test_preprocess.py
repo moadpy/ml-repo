@@ -246,11 +246,6 @@ class TestPreprocessAlert:
 class TestLoadRaw:
     def test_csv_columns_renamed_correctly(self, tmp_path):
         df = make_df()
-        # Rename back to CSV format for test
-        df_csv = df.rename(columns={
-            "cpu_percent_avg5": "cpu_percent_avg5",
-            "memory_percent_avg5": "memory_percent_avg5",
-        })
         csv_path = tmp_path / "test.csv"
         df.to_csv(csv_path, index=False)
 

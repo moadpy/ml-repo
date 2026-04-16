@@ -131,7 +131,7 @@ def print_report(target: str, score: int, breakdown: dict, findings: list[dict],
     print("=" * 60)
     print(f"\n  Security Score : {score} / 100")
     print(f"  Min Required   : {min_score} / 100")
-    print(f"\n  Findings by severity:")
+    print("\n  Findings by severity:")
     print(f"    🔴 ERROR   (high)   : {breakdown.get('ERROR', 0)}")
     print(f"    🟡 WARNING (medium) : {breakdown.get('WARNING', 0)}")
     print(f"    🔵 INFO    (low)    : {breakdown.get('INFO', 0)}")

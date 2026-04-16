@@ -21,7 +21,6 @@ Metric fingerprints per signature class (realistic value ranges):
 import argparse
 import json
 import os
-import random
 import uuid
 from datetime import datetime, timedelta, timezone
 

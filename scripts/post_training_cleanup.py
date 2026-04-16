@@ -15,7 +15,6 @@ Environment variables:
 
 import argparse
 import os
-import sys
 
 import yaml
 from azure.ai.ml import MLClient
