@@ -54,11 +54,13 @@ def make_df(**overrides) -> pd.DataFrame:
             "cpu_percent",
         ],
         # Internal names (after load_raw() rename)
-        "cpu_avg5": [15.0, 28.0, 94.0, 80.0, 12.0, 30.0],
-        "mem_avg5": [52.0, 88.0, 60.0, 82.0, 45.0, 40.0],
-        "http5xx_avg5": [8.0, 2.0, 18.0, 35.0, 38.0, 1.5],
-        "db_wait_avg5": [340.0, 20.0, 45.0, 200.0, 15.0, 10.0],
-        "latency_avg5": [620.0, 140.0, 1200.0, 1500.0, 900.0, 90.0],
+        # cascade_failure (index 3) must clear the all_above_threshold spike threshold (0.70)
+        # per-metric normalisation: cpu/100, mem/100, http5xx/50, db_wait/450, latency/2500
+        "cpu_avg5": [15.0, 28.0, 94.0, 80.0, 12.0, 30.0],   # cascade: 80/100=0.80 ✓
+        "mem_avg5": [52.0, 88.0, 60.0, 82.0, 45.0, 40.0],   # cascade: 82/100=0.82 ✓
+        "http5xx_avg5": [8.0, 2.0, 18.0, 36.0, 38.0, 1.5],  # cascade: 36/50=0.72 ✓
+        "db_wait_avg5": [340.0, 20.0, 45.0, 320.0, 15.0, 10.0],  # cascade: 320/450=0.71 ✓
+        "latency_avg5": [620.0, 140.0, 1200.0, 1800.0, 900.0, 90.0],  # cascade: 1800/2500=0.72 ✓
         "incident_signature": [
             "db_pool_exhaustion",
             "memory_leak_progressive",
