@@ -29,6 +29,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 import yaml
 from azure.ai.ml import MLClient, Input, command
