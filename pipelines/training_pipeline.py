@@ -42,28 +42,10 @@ from azure.ai.ml.entities import (
     ManagedOnlineEndpoint,
     Model,
 )
-from azure.identity import ClientSecretCredential
+from azure.identity import DefaultAzureCredential
 
 MODEL_NAME = "incident-signature-classifier"
 ENVIRONMENT_NAME = "rca-training-env"
-CONDA_YAML_CONTENT = """
-name: rca-training-env
-channels:
-  - conda-forge
-  - defaults
-dependencies:
-  - python=3.11
-  - pip
-  - pip:
-    - xgboost==2.0.3
-    - scikit-learn==1.4.2
-    - pandas==2.2.2
-    - numpy==1.26.4
-    - matplotlib==3.8.4
-    - mlflow==2.13.0
-    - azureml-mlflow==1.56.0
-"""
-
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -85,11 +67,7 @@ def parse_args() -> argparse.Namespace:
 # ---------------------------------------------------------------------------
 
 def get_ml_client(cfg: dict) -> MLClient:
-    credential = ClientSecretCredential(
-        tenant_id=os.environ["AZURE_TENANT_ID"],
-        client_id=os.environ["AZURE_CLIENT_ID"],
-        client_secret=os.environ["AZURE_CLIENT_SECRET"],
-    )
+    credential = DefaultAzureCredential()
     return MLClient(
         credential=credential,
         subscription_id=os.environ["AZURE_SUBSCRIPTION_ID"],
@@ -137,16 +115,11 @@ def ensure_datastore(ml_client: MLClient, cfg: dict, storage_account: str) -> st
         print(f"[datastore] '{ds_name}' already registered.")
     except Exception:
         print(f"[datastore] Registering datastore '{ds_name}' → {storage_account}/{container}")
-        credential = ClientSecretCredential(
-            tenant_id=os.environ["AZURE_TENANT_ID"],
-            client_id=os.environ["AZURE_CLIENT_ID"],
-            client_secret=os.environ["AZURE_CLIENT_SECRET"],
-        )
         datastore = AzureBlobDatastore(
             name=ds_name,
             account_name=storage_account,
             container_name=container,
-            credentials=credential,
+            credentials=None, # Uses identity-based access (OIDC/Managed Identity)
         )
         ml_client.datastores.create_or_update(datastore)
         print(f"[datastore] Datastore '{ds_name}' registered.")
@@ -173,31 +146,6 @@ def register_dataset(ml_client: MLClient, cfg: dict) -> str:
     registered = ml_client.data.create_or_update(data_asset)
     print(f"[dataset] Registered '{asset_name}' version {registered.version} → {dataset_uri}")
     return f"azureml:{asset_name}:{registered.version}"
-
-
-# ---------------------------------------------------------------------------
-# Step 4 — Ensure environment
-# ---------------------------------------------------------------------------
-
-def ensure_environment(ml_client: MLClient, cfg: dict) -> str:
-    """Create or reuse the curated training environment. Returns versioned name."""
-    env_name = cfg["azure_ml"].get("environment_name", ENVIRONMENT_NAME)
-    conda_path = "/tmp/rca_conda.yml"
-
-    with open(conda_path, "w") as f:
-        f.write(CONDA_YAML_CONTENT)
-
-    env = Environment(
-        name=env_name,
-        description="RCA incident signature classifier — Python 3.11 + XGBoost + MLflow",
-        conda_file=conda_path,
-        image="mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04",
-    )
-
-    registered_env = ml_client.environments.create_or_update(env)
-    versioned = f"{env_name}:{registered_env.version}"
-    print(f"[env] Using environment '{versioned}'")
-    return versioned
 
 
 # ---------------------------------------------------------------------------
@@ -385,7 +333,12 @@ def main() -> None:
     ensure_compute(ml_client, cfg)
     ensure_datastore(ml_client, cfg, storage_account)
     dataset_uri = register_dataset(ml_client, cfg)
-    env_versioned = ensure_environment(ml_client, cfg)
+    
+    # Use the environment registered by the dedicated environment CI job
+    env_name = cfg["azure_ml"].get("environment_name", ENVIRONMENT_NAME)
+    env_versioned = f"azureml:{env_name}@latest"
+    print(f"[env] Using pre-built environment '{env_versioned}'")
+
     run_id = submit_training_job(ml_client, cfg, dataset_uri, env_versioned, args)
     metrics = wait_for_job(ml_client, run_id)
 
