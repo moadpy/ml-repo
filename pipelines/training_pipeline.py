@@ -241,7 +241,7 @@ def register_model(ml_client: MLClient, run_id: str, cfg: dict) -> Optional[str]
     model = Model(
         name=MODEL_NAME,
         description=f"RCA incident signature classifier — 6-class XGBoost ({env})",
-        path=f"azureml://jobs/{run_id}/outputs/default/outputs/model.pkl",
+        path=f"azureml://jobs/{run_id}/outputs/artifacts/paths/outputs/model.pkl",
         type="custom_model",
         tags={
             "task": "incident_signature_classification",
