@@ -12,7 +12,7 @@
 environment: dev
 
 azure:
-  resource_group: rg-rca-dev
+  resource_group: dev-env-rg
   location: westeurope
 
 azure_ml:
@@ -29,13 +29,14 @@ azure_ml:
   training:
     experiment_name: rca-incident-signature-dev
     environment_name: rca-training-env-test
+    environment_version: "1"
     python_version: "3.11"
     f1_threshold: 0.72               # Minimum F1-macro across 6 classes to register model
 
   endpoint:
     name: rca-endpoint-dev
     deployment_name: blue
-    instance_type: Standard_DS2_v2
+    instance_type: Standard_D2as_v4
     instance_count: 1                # Single replica for dev
 
 storage:

@@ -35,13 +35,13 @@ import yaml
 from azure.ai.ml import MLClient, Input, command
 from azure.ai.ml.constants import AssetTypes
 from azure.ai.ml.entities import (
-    AmlCompute,
     AzureBlobDatastore,
     Data,
     Environment,
     ManagedOnlineDeployment,
     ManagedOnlineEndpoint,
     Model,
+    CodeConfiguration,
 )
 from azure.identity import DefaultAzureCredential
 
@@ -56,6 +56,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Submit Azure ML RCA training pipeline")
     p.add_argument("--config", required=True, help="Path to environment YAML (e.g. config/dev.yml)")
     p.add_argument("--deploy", action="store_true", help="Deploy model to Online Endpoint after registration")
+    p.add_argument("--deploy-only", action="store_true", help="Skip training and deploy the latest registered model")
     p.add_argument("--n_estimators", type=int, default=200)
     p.add_argument("--max_depth", type=int, default=6)
     p.add_argument("--learning_rate", type=float, default=0.1)
@@ -77,29 +78,7 @@ def get_ml_client(cfg: dict) -> MLClient:
     )
 
 
-# ---------------------------------------------------------------------------
-# Step 1 — Ensure compute cluster
-# ---------------------------------------------------------------------------
 
-def ensure_compute(ml_client: MLClient, cfg: dict) -> None:
-    comp_cfg = cfg["azure_ml"]["compute"]
-    name = comp_cfg["name"]
-    try:
-        ml_client.compute.get(name)
-        print(f"[compute] Cluster '{name}' already exists.")
-    except Exception:
-        print(f"[compute] Creating cluster '{name}'...")
-        cluster = AmlCompute(
-            name=name,
-            type="amlcompute",
-            size=comp_cfg["vm_size"],
-            location=comp_cfg.get("location", cfg["azure"]["location"]),
-            min_instances=comp_cfg["min_instances"],
-            max_instances=comp_cfg["max_instances"],
-            idle_time_before_scale_down=comp_cfg["idle_seconds_before_scaledown"],
-        )
-        ml_client.compute.begin_create_or_update(cluster).result()
-        print(f"[compute] Cluster '{name}' created.")
 
 
 # ---------------------------------------------------------------------------
@@ -229,12 +208,23 @@ def wait_for_job(ml_client: MLClient, run_id: str, timeout_seconds: int = 3600) 
     try:
         output_dir = "/tmp/job_outputs"
         ml_client.jobs.download(run_id, download_path=output_dir, output_name="default")
-        metrics_path = Path(output_dir) / "named-outputs" / "default" / "outputs" / "metrics.json"
-        if metrics_path.exists():
-            with open(metrics_path) as f:
-                metrics = json.load(f)
-            print(f"[job] Metrics: {metrics}")
-            return metrics
+        
+        # Azure ML SDK download folder structures vary depending on versions and outputs setup
+        possible_paths = [
+            Path(output_dir) / "named-outputs" / "default" / "outputs" / "metrics.json",
+            Path(output_dir) / "artifacts" / "outputs" / "metrics.json",
+            Path(output_dir) / "artifacts" / "metrics.json",
+            Path(output_dir) / "outputs" / "metrics.json"
+        ]
+        
+        for p in possible_paths:
+            if p.exists():
+                with open(p) as f:
+                    metrics = json.load(f)
+                print(f"[job] Metrics found at {p}: {metrics}")
+                return metrics
+                
+        print(f"[job] Warning: metrics.json not found in {output_dir}")
     except Exception as e:
         print(f"[job] Could not download metrics: {e}")
 
@@ -289,15 +279,23 @@ def deploy_endpoint(ml_client: MLClient, model_version: str, cfg: dict) -> None:
 
     # Deploy new Blue version
     print(f"[deploy] Deploying model version {model_version} as '{deployment_name}'...")
+    train_cfg = cfg["azure_ml"].get("training", {})
+    env_name = train_cfg.get("environment_name", ENVIRONMENT_NAME)
+    env_version = str(train_cfg.get("environment_version", "latest"))
+    if env_version.lower() == "latest":
+        env_versioned = f"azureml:{env_name}@latest"
+    else:
+        env_versioned = f"azureml:{env_name}:{env_version}"
+
     deployment = ManagedOnlineDeployment(
         name=deployment_name,
         endpoint_name=endpoint_name,
         model=f"{MODEL_NAME}:{model_version}",
-        code_configuration={
-            "code": "./src",
-            "scoring_script": "score.py",
-        },
-        environment=f"{cfg['azure_ml'].get('environment_name', ENVIRONMENT_NAME)}:latest",
+        code_configuration=CodeConfiguration(
+            code="./src",
+            scoring_script="score.py",
+        ),
+        environment=env_versioned,
         instance_type=ep_cfg["instance_type"],
         instance_count=ep_cfg["instance_count"],
     )
@@ -331,13 +329,25 @@ def main() -> None:
 
     ml_client = get_ml_client(cfg)
 
-    ensure_compute(ml_client, cfg)
+    if args.deploy_only:
+        print("\n[deploy] --deploy-only flag passed. Skipping training...")
+        latest_model = ml_client.models.get(name=MODEL_NAME, label="latest")
+        print(f"[deploy] Found latest model '{MODEL_NAME}' version {latest_model.version}")
+        deploy_endpoint(ml_client, latest_model.version, cfg)
+        print("\n=== Pipeline complete ===")
+        return
+
     ensure_datastore(ml_client, cfg, storage_account)
     dataset_uri = register_dataset(ml_client, cfg)
     
     # Use the environment registered by the dedicated environment CI job
-    env_name = cfg["azure_ml"].get("environment_name", ENVIRONMENT_NAME)
-    env_versioned = f"azureml:{env_name}@latest"
+    train_cfg = cfg["azure_ml"].get("training", {})
+    env_name = train_cfg.get("environment_name", ENVIRONMENT_NAME)
+    env_version = str(train_cfg.get("environment_version", "latest"))
+    if env_version.lower() == "latest":
+        env_versioned = f"azureml:{env_name}@latest"
+    else:
+        env_versioned = f"azureml:{env_name}:{env_version}"
     print(f"[env] Using pre-built environment '{env_versioned}'")
 
     run_id = submit_training_job(ml_client, cfg, dataset_uri, env_versioned, args)
