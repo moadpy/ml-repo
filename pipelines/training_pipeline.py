@@ -35,6 +35,7 @@ import yaml
 from azure.ai.ml import MLClient, Input, command
 from azure.ai.ml.constants import AssetTypes
 from azure.ai.ml.entities import (
+    AmlCompute,
     AzureBlobDatastore,
     Data,
     Environment,
@@ -79,6 +80,32 @@ def get_ml_client(cfg: dict) -> MLClient:
 
 
 
+
+
+# ---------------------------------------------------------------------------
+# Step 1 — Ensure compute cluster
+# ---------------------------------------------------------------------------
+
+def ensure_compute(ml_client: MLClient, cfg: dict) -> None:
+    """Ensure the compute cluster exists (creates it if needed)."""
+    comp_cfg = cfg["azure_ml"]["compute"]
+    comp_name = comp_cfg["name"]
+
+    try:
+        ml_client.compute.get(comp_name)
+        print(f"[compute] Compute target '{comp_name}' already exists.")
+    except Exception:
+        print(f"[compute] Compute target '{comp_name}' not found. Creating...")
+        compute = AmlCompute(
+            name=comp_name,
+            size=comp_cfg["vm_size"],
+            min_instances=comp_cfg.get("min_instances", 0),
+            max_instances=comp_cfg.get("max_instances", 1),
+            idle_time_before_scale_down=comp_cfg.get("idle_seconds_before_scaledown", 120),
+            location=comp_cfg.get("location", cfg["azure"]["location"]),
+        )
+        ml_client.compute.begin_create_or_update(compute).result()
+        print(f"[compute] Compute target '{comp_name}' created.")
 
 
 # ---------------------------------------------------------------------------
@@ -337,6 +364,7 @@ def main() -> None:
         print("\n=== Pipeline complete ===")
         return
 
+    ensure_compute(ml_client, cfg)
     ensure_datastore(ml_client, cfg, storage_account)
     dataset_uri = register_dataset(ml_client, cfg)
     
