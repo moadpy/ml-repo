@@ -20,14 +20,13 @@ from sklearn.preprocessing import LabelEncoder
 # Constants — must stay consistent between train.py and score.py
 # ---------------------------------------------------------------------------
 
-# Canonical feature order (9 features)
+# Canonical feature order (8 features)
 FEATURE_COLUMNS = [
     "cpu_avg5",
     "mem_avg5",
     "http5xx_avg5",
     "db_wait_avg5",
     "latency_avg5",
-    "breaching_metric_enc",
     "db_wait_to_cpu_ratio",
     "mem_dominance",
     "all_metrics_spike",
@@ -129,8 +128,6 @@ def _derive_features(df: pd.DataFrame) -> pd.DataFrame:
     """Add derived ratio/spike columns to a DataFrame that already has raw avg columns."""
     df = df.copy()
 
-    df["breaching_metric_enc"] = df["breaching_metric"].apply(encode_metric_name)
-
     df["db_wait_to_cpu_ratio"] = df.apply(
         lambda r: safe_divide(r["db_wait_avg5"], r["cpu_avg5"]), axis=1
     )
@@ -202,7 +199,6 @@ def preprocess_alert(alert_payload: dict) -> pd.DataFrame:
         "http5xx_avg5": http5xx,
         "db_wait_avg5": db_wait,
         "latency_avg5": latency,
-        "breaching_metric_enc": encode_metric_name(metric_name),
         "db_wait_to_cpu_ratio": safe_divide(db_wait, cpu),
         "mem_dominance": mem / (cpu + 1.0),
         "all_metrics_spike": all_above_threshold(cpu, mem, http5xx, db_wait, latency),

@@ -30,7 +30,7 @@ Output JSON (single):
             "network_partition": 0.01,
             "normal_noisy": 0.00
         },
-        "top_contributing_features": ["db_wait_avg5", "breaching_metric_enc", "db_wait_to_cpu_ratio"]
+        "top_contributing_features": ["db_wait_avg5", "db_wait_to_cpu_ratio", "latency_avg5"]
     }
 """
 

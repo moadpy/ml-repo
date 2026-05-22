@@ -49,59 +49,82 @@ def _generate_class_samples(signature: str, n: int, base_time: datetime, seed_of
     rows = []
 
     for i in range(n):
-        ts = base_time - timedelta(hours=rng.integers(1, 720))
+        ts = base_time - timedelta(hours=int(rng.integers(1, 720)))
         service = rng.choice(SERVICES)
         inc_id = f"INC-{seed_offset * 1000 + i + 1:04d}"
 
         if signature == "db_pool_exhaustion":
-            cpu = rng.uniform(8, 32)
-            mem = rng.uniform(35, 68)
-            http5xx = rng.uniform(3, 20)
-            db_wait = rng.uniform(200, 450)
-            latency = rng.uniform(180, 850)
-            breaching = "db_conn_pool_wait_ms"
+            # 80% typical high wait time, 20% early onset or lower pool capacity exhaustion
+            db_wait = rng.uniform(200, 450) if rng.random() < 0.8 else rng.uniform(80, 200)
+            cpu = rng.uniform(10, 60)
+            mem = rng.uniform(30, 70)
+            # HTTP 5xx rate can be high if web server fails to get connections, or moderate
+            http5xx = rng.uniform(5, 30)
+            # Latency is high because requests block on connection acquisition
+            latency = rng.uniform(200, 1200)
+            breaching = rng.choice(["db_conn_pool_wait_ms", "request_latency_p99", "http_5xx_rate"])
 
         elif signature == "memory_leak_progressive":
-            cpu = rng.uniform(18, 42)
-            mem = rng.uniform(80, 96)
-            http5xx = rng.uniform(0, 5)
-            db_wait = rng.uniform(5, 50)
-            latency = rng.uniform(80, 320)
-            breaching = "memory_percent"
+            # 90% typical high memory, 10% early memory pressure
+            mem = rng.uniform(75, 98) if rng.random() < 0.9 else rng.uniform(60, 75)
+            # Garbage Collection thrashing can cause moderate to high CPU
+            cpu = rng.uniform(15, 85)
+            http5xx = rng.uniform(0, 8)
+            # Slowdowns due to memory pressure/GC pauses
+            latency = rng.uniform(100, 800)
+            db_wait = rng.uniform(5, 60)
+            breaching = rng.choice(["memory_percent", "request_latency_p99", "cpu_percent"])
 
         elif signature == "cpu_saturation_burst":
-            cpu = rng.uniform(88, 99)
-            mem = rng.uniform(48, 78)
-            http5xx = rng.uniform(8, 32)
-            db_wait = rng.uniform(20, 90)
-            latency = rng.uniform(500, 2500)
-            breaching = "cpu_percent"
+            cpu = rng.uniform(85, 100)
+            mem = rng.uniform(20, 75)
+            # Scenario A: High traffic load (70% probability) -> impacts latency/5xx
+            if rng.random() < 0.70:
+                http5xx = rng.uniform(5, 35)
+                db_wait = rng.uniform(15, 80)
+                latency = rng.uniform(400, 2500)
+            # Scenario B: Background jobs / compute-bound tasks / gc spikes (30% probability) -> normal downstream metrics
+            else:
+                http5xx = rng.uniform(0, 3)
+                db_wait = rng.uniform(3, 20)
+                latency = rng.uniform(40, 250)
+            breaching = rng.choice(["cpu_percent", "request_latency_p99", "http_5xx_rate"])
 
         elif signature == "cascade_failure":
-            cpu = rng.uniform(70, 99)
-            mem = rng.uniform(70, 96)
-            http5xx = rng.uniform(22, 50)
-            db_wait = rng.uniform(100, 400)
-            latency = rng.uniform(800, 2500)
+            cpu = rng.uniform(65, 100)
+            mem = rng.uniform(60, 98)
+            http5xx = rng.uniform(20, 60)
+            db_wait = rng.uniform(80, 450)
+            latency = rng.uniform(800, 3000)
             breaching = rng.choice(
-                ["cpu_percent", "http_5xx_rate", "request_latency_p99", "db_conn_pool_wait_ms"]
+                ["cpu_percent", "http_5xx_rate", "request_latency_p99", "db_conn_pool_wait_ms", "memory_percent"]
             )
 
         elif signature == "network_partition":
-            cpu = rng.uniform(8, 28)
-            mem = rng.uniform(38, 68)
-            http5xx = rng.uniform(25, 50)
-            db_wait = rng.uniform(8, 55)
-            latency = rng.uniform(450, 1600)
+            cpu = rng.uniform(8, 45)
+            mem = rng.uniform(30, 70)
+            http5xx = rng.uniform(20, 60)
+            db_wait = rng.uniform(5, 60)
+            # 60% slow timeout, 40% fail fast immediate failure (low latency)
+            latency = rng.uniform(1000, 3000) if rng.random() < 0.6 else rng.uniform(10, 150)
             breaching = rng.choice(["http_5xx_rate", "request_latency_p99"])
 
         else:  # normal_noisy
-            cpu = rng.uniform(15, 52)
-            mem = rng.uniform(28, 62)
-            http5xx = rng.uniform(0, 4)
-            db_wait = rng.uniform(3, 32)
-            latency = rng.uniform(40, 220)
-            breaching = rng.choice(["cpu_percent", "memory_percent", "http_5xx_rate"])
+            # 60% completely quiet baseline
+            if rng.random() < 0.6:
+                cpu = rng.uniform(5, 45)
+                mem = rng.uniform(15, 55)
+                http5xx = rng.uniform(0, 2)
+                db_wait = rng.uniform(2, 20)
+                latency = rng.uniform(20, 150)
+            # 40% transient spikes in single metrics (representing alerts that fire but aren't root causes)
+            else:
+                cpu = rng.uniform(15, 98) if rng.random() < 0.35 else rng.uniform(5, 45)
+                mem = rng.uniform(20, 65)
+                http5xx = rng.uniform(0, 10) if rng.random() < 0.2 else rng.uniform(0, 2)
+                db_wait = rng.uniform(5, 350) if rng.random() < 0.2 else rng.uniform(2, 20)
+                latency = rng.uniform(30, 600) if rng.random() < 0.25 else rng.uniform(20, 150)
+            breaching = rng.choice(["cpu_percent", "memory_percent", "http_5xx_rate", "request_latency_p99"])
 
         rows.append(
             {
@@ -425,7 +448,7 @@ def generate_rag_context(output_path: str) -> None:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Generate synthetic RCA training data and RAG context")
-    p.add_argument("--n_samples", type=int, default=1500, help="Number of labeled CSV rows")
+    p.add_argument("--n_samples", type=int, default=3000, help="Number of labeled CSV rows")
     p.add_argument("--output_dir", type=str, default="data/rca_poc")
     return p.parse_args()
 

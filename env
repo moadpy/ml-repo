@@ -1,0 +1,2 @@
+$env:AZURE_SUBSCRIPTION_ID="ce954bbd-0e01-4bb8-b01e-90d15bd16e75"
+$env:STORAGE_ACCOUNT_DEV="samlops8webdf"

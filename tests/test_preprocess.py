@@ -226,12 +226,6 @@ class TestPreprocessAlert:
         payload = make_alert_payload()
         X = preprocess_alert(payload)
         assert X.dtypes.apply(lambda d: np.issubdtype(d, np.floating)).all()
-
-    def test_breaching_metric_encoded(self):
-        payload = make_alert_payload(breaching_metric="db_conn_pool_wait_ms")
-        X = preprocess_alert(payload)
-        assert X["breaching_metric_enc"].iloc[0] == encode_metric_name("db_conn_pool_wait_ms")
-
     def test_db_wait_to_cpu_ratio_computed(self):
         payload = make_alert_payload(db_conn_pool_wait_avg5=300.0, cpu_percent_avg5=15.0)
         X = preprocess_alert(payload)
@@ -241,11 +235,6 @@ class TestPreprocessAlert:
         payload = make_alert_payload(memory_percent_avg5=80.0, cpu_percent_avg5=20.0)
         X = preprocess_alert(payload)
         assert X["mem_dominance"].iloc[0] == pytest.approx(80.0 / 21.0)
-
-    def test_unknown_metric_uses_fallback_encoding(self):
-        payload = make_alert_payload(breaching_metric="unknown_new_metric")
-        X = preprocess_alert(payload)
-        assert X["breaching_metric_enc"].iloc[0] == 5
 
     def test_zero_cpu_does_not_raise(self):
         payload = make_alert_payload(cpu_percent_avg5=0.0)
@@ -306,7 +295,7 @@ class TestConstants:
         assert len(CLASS_NAMES) == 6
 
     def test_feature_columns_count(self):
-        assert len(FEATURE_COLUMNS) == 9
+        assert len(FEATURE_COLUMNS) == 8
 
     def test_no_duplicate_class_names(self):
         assert len(CLASS_NAMES) == len(set(CLASS_NAMES))

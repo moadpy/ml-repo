@@ -33,7 +33,6 @@ FEATURE_COLUMNS = [
     "http5xx_avg5",
     "db_wait_avg5",
     "latency_avg5",
-    "breaching_metric_enc",
     "db_wait_to_cpu_ratio",
     "mem_dominance",
     "all_metrics_spike",
@@ -61,7 +60,7 @@ _SAMPLE_PAYLOAD = {
 }
 
 _SAMPLE_FEATURES = pd.DataFrame(
-    [[15.0, 52.0, 8.0, 342.0, 620.0, 0, 342.0 / 15.0, 52.0 / 16.0, 0]],
+    [[15.0, 52.0, 8.0, 342.0, 620.0, 342.0 / 15.0, 52.0 / 16.0, 0]],
     columns=FEATURE_COLUMNS,
 ).astype(float)
 
