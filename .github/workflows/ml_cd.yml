@@ -93,7 +93,7 @@ jobs:
             ACR_NAME=$(echo "$ACR_ID" | awk -F'/' '{print $NF}')
             echo "Associated ACR: $ACR_NAME"
             echo "Temporarily enabling public network access for ACR..."
-            az acr update --name $ACR_NAME --public-network-enabled true
+            az acr update --name $ACR_NAME --public-network-enabled true --default-action Allow
           fi
 
           echo "Waiting 45 seconds for Azure network security rules to fully propagate..."
@@ -138,7 +138,7 @@ jobs:
           if [ ! -z "$ACR_ID" ] && [ "$ACR_ID" != "None" ]; then
             ACR_NAME=$(echo "$ACR_ID" | awk -F'/' '{print $NF}')
             echo "Restoring public network access restriction for ACR..."
-            az acr update --name $ACR_NAME --public-network-enabled false || true
+            az acr update --name $ACR_NAME --public-network-enabled false --default-action Deny || true
           fi
 
           # Remove Storage Account IP rule
