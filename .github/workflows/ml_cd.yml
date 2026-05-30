@@ -60,7 +60,7 @@ jobs:
           echo "Resource Group: $RG"
           echo "Workspace Name: $WS"
 
-          # 3. Query Workspace details to get associated Key Vault and Storage Account
+          # 3. Query Workspace details to get associated Key Vault, Storage Account, and ACR
           echo "Querying workspace associated resources..."
           WS_SHOW=$(az ml workspace show --name $WS --resource-group $RG --output json)
           
@@ -69,6 +69,8 @@ jobs:
           
           SA_ID=$(echo "$WS_SHOW" | python -c "import sys, json; print(json.load(sys.stdin)['storage_account'])")
           SA_NAME=$(echo "$SA_ID" | awk -F'/' '{print $NF}')
+          
+          ACR_ID=$(echo "$WS_SHOW" | python -c "import sys, json; print(json.load(sys.stdin).get('container_registry', ''))")
           
           echo "Associated Key Vault: $KV_NAME"
           echo "Associated Storage Account: $SA_NAME"
@@ -85,6 +87,14 @@ jobs:
           # 6. Add IP rule for Storage Account
           echo "Whitelisting IP for Storage Account..."
           az storage account network-rule add --resource-group $RG --account-name $SA_NAME --ip-address $RUNNER_IP
+
+          # 7. Enable Public Access for ACR (Required for Azure ML Image Build / Conda Env compilation)
+          if [ ! -z "$ACR_ID" ] && [ "$ACR_ID" != "None" ]; then
+            ACR_NAME=$(echo "$ACR_ID" | awk -F'/' '{print $NF}')
+            echo "Associated ACR: $ACR_NAME"
+            echo "Temporarily enabling public network access for ACR..."
+            az acr update --name $ACR_NAME --public-network-enabled true
+          fi
 
       - name: Run Azure ML Training & Deployment Pipeline
         env:
@@ -108,7 +118,7 @@ jobs:
           RG=$(python -c "import yaml; print(yaml.safe_load(open('config/dev.yml'))['azure']['resource_group'])")
           WS=$(python -c "import yaml; print(yaml.safe_load(open('config/dev.yml'))['azure_ml']['workspace_name'])")
 
-          # 3. Query Key Vault and Storage Account
+          # 3. Query Key Vault, Storage Account, and ACR
           WS_SHOW=$(az ml workspace show --name $WS --resource-group $RG --output json)
           
           KV_ID=$(echo "$WS_SHOW" | python -c "import sys, json; print(json.load(sys.stdin)['key_vault'])")
@@ -117,7 +127,16 @@ jobs:
           SA_ID=$(echo "$WS_SHOW" | python -c "import sys, json; print(json.load(sys.stdin)['storage_account'])")
           SA_NAME=$(echo "$SA_ID" | awk -F'/' '{print $NF}')
 
+          ACR_ID=$(echo "$WS_SHOW" | python -c "import sys, json; print(json.load(sys.stdin).get('container_registry', ''))")
+
           echo "Cleaning up network rules..."
+
+          # Disable public network access for ACR
+          if [ ! -z "$ACR_ID" ] && [ "$ACR_ID" != "None" ]; then
+            ACR_NAME=$(echo "$ACR_ID" | awk -F'/' '{print $NF}')
+            echo "Restoring public network access restriction for ACR..."
+            az acr update --name $ACR_NAME --public-network-enabled false || true
+          fi
 
           # Remove Storage Account IP rule
           if [ ! -z "$SA_NAME" ]; then
