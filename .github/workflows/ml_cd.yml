@@ -9,6 +9,7 @@ on:
       - 'src/**'
       - 'pipelines/training_pipeline.py'
       - 'config/**'
+      - '.github/workflows/ml_cd.yml'
   workflow_dispatch:
     inputs:
       deploy:

@@ -8,6 +8,7 @@ on:
     paths:
       - 'environments/**'
       - 'pipelines/build_environment.py'
+      - '.github/workflows/ml_environment.yml'
   workflow_dispatch:
 
 jobs:
