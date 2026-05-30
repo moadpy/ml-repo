@@ -12,11 +12,11 @@
 environment: dev
 
 azure:
-  resource_group: dev-env-rg
+  resource_group: preprod-env-rg
   location: westeurope
 
 azure_ml:
-  workspace_name: aml-rca-dev
+  workspace_name: aml-rca-preprod
 
   compute:
     name: cpu-cluster-dev
