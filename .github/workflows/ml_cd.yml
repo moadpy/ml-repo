@@ -44,6 +44,47 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Temporarily Enable Public Access and Whitelist Runner IP
+        run: |
+          echo "Installing Azure CLI ML extension..."
+          az extension add --name ml -y
+
+          # 1. Fetch the runner's public IP
+          RUNNER_IP=$(curl -s https://api.ipify.org)
+          echo "Runner Public IP: $RUNNER_IP"
+
+          # 2. Parse resource group and workspace name from config/dev.yml
+          RG=$(python -c "import yaml; print(yaml.safe_load(open('config/dev.yml'))['azure']['resource_group'])")
+          WS=$(python -c "import yaml; print(yaml.safe_load(open('config/dev.yml'))['azure_ml']['workspace_name'])")
+          echo "Resource Group: $RG"
+          echo "Workspace Name: $WS"
+
+          # 3. Query Workspace details to get associated Key Vault and Storage Account
+          echo "Querying workspace associated resources..."
+          WS_SHOW=$(az ml workspace show --name $WS --resource-group $RG --output json)
+          
+          KV_ID=$(echo "$WS_SHOW" | python -c "import sys, json; print(json.load(sys.stdin)['key_vault'])")
+          KV_NAME=$(echo "$KV_ID" | awk -F'/' '{print $NF}')
+          
+          SA_ID=$(echo "$WS_SHOW" | python -c "import sys, json; print(json.load(sys.stdin)['storage_account'])")
+          SA_NAME=$(echo "$SA_ID" | awk -F'/' '{print $NF}')
+          
+          echo "Associated Key Vault: $KV_NAME"
+          echo "Associated Storage Account: $SA_NAME"
+
+          # 4. Enable Public Access for ML Workspace
+          echo "Enabling public network access for ML Workspace..."
+          az ml workspace update --name $WS --resource-group $RG --public-network-access Enabled
+
+          # 5. Enable Public Access & Add IP rule for Key Vault
+          echo "Enabling public network access and whitelisting IP for Key Vault..."
+          az keyvault update --name $KV_NAME --public-network-access Enabled
+          az keyvault network-rule add --name $KV_NAME --ip-address $RUNNER_IP
+
+          # 6. Add IP rule for Storage Account
+          echo "Whitelisting IP for Storage Account..."
+          az storage account network-rule add --resource-group $RG --account-name $SA_NAME --ip-address $RUNNER_IP
+
       - name: Run Azure ML Training & Deployment Pipeline
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -55,3 +96,42 @@ jobs:
           else
             python pipelines/training_pipeline.py --config config/dev.yml --deploy
           fi
+
+      - name: Cleanup Network Access Rules
+        if: always()
+        run: |
+          # 1. Fetch the runner's public IP
+          RUNNER_IP=$(curl -s https://api.ipify.org)
+
+          # 2. Parse resource group and workspace name
+          RG=$(python -c "import yaml; print(yaml.safe_load(open('config/dev.yml'))['azure']['resource_group'])")
+          WS=$(python -c "import yaml; print(yaml.safe_load(open('config/dev.yml'))['azure_ml']['workspace_name'])")
+
+          # 3. Query Key Vault and Storage Account
+          WS_SHOW=$(az ml workspace show --name $WS --resource-group $RG --output json)
+          
+          KV_ID=$(echo "$WS_SHOW" | python -c "import sys, json; print(json.load(sys.stdin)['key_vault'])")
+          KV_NAME=$(echo "$KV_ID" | awk -F'/' '{print $NF}')
+          
+          SA_ID=$(echo "$WS_SHOW" | python -c "import sys, json; print(json.load(sys.stdin)['storage_account'])")
+          SA_NAME=$(echo "$SA_ID" | awk -F'/' '{print $NF}')
+
+          echo "Cleaning up network rules..."
+
+          # Remove Storage Account IP rule
+          if [ ! -z "$SA_NAME" ]; then
+            echo "Removing IP rule from Storage Account..."
+            az storage account network-rule remove --resource-group $RG --account-name $SA_NAME --ip-address $RUNNER_IP || true
+          fi
+
+          # Remove Key Vault IP rule and disable public access
+          if [ ! -z "$KV_NAME" ]; then
+            echo "Removing IP rule from Key Vault..."
+            az keyvault network-rule remove --name $KV_NAME --ip-address $RUNNER_IP || true
+            echo "Disabling public network access for Key Vault..."
+            az keyvault update --name $KV_NAME --public-network-access Disabled || true
+          fi
+
+          # Disable public network access for AML Workspace
+          echo "Disabling public network access for ML Workspace..."
+          az ml workspace update --name $WS --resource-group $RG --public-network-access Disabled || true
