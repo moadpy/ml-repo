@@ -34,7 +34,7 @@ azure_ml:
     f1_threshold: 0.72               # Minimum F1-macro across 6 classes to register model
 
   endpoint:
-    name: rca-endpoint-dev
+    name: rca-endpoint-preprod-34c075
     deployment_name: blue
     instance_type: Standard_D2as_v4
     instance_count: 1                # Single replica for dev
