@@ -368,15 +368,34 @@ def main() -> None:
     ensure_datastore(ml_client, cfg, storage_account)
     dataset_uri = register_dataset(ml_client, cfg)
     
-    # Use the environment registered by the dedicated environment CI job
+    # Use the environment registered by the dedicated environment CI job, or build it if missing
     train_cfg = cfg["azure_ml"].get("training", {})
     env_name = train_cfg.get("environment_name", ENVIRONMENT_NAME)
     env_version = str(train_cfg.get("environment_version", "latest"))
+    
     if env_version.lower() == "latest":
         env_versioned = f"azureml:{env_name}@latest"
+        print(f"[env] Using environment: '{env_versioned}'")
     else:
-        env_versioned = f"azureml:{env_name}:{env_version}"
-    print(f"[env] Using pre-built environment '{env_versioned}'")
+        try:
+            ml_client.environments.get(name=env_name, version=env_version)
+            print(f"[env] Found pre-registered environment '{env_name}:{env_version}'")
+            env_versioned = f"azureml:{env_name}:{env_version}"
+        except Exception:
+            print(f"[env] Environment '{env_name}:{env_version}' not found. Building and registering it dynamically...")
+            from azure.ai.ml.entities import BuildContext
+            env = Environment(
+                name=env_name,
+                version=env_version,
+                description="RCA incident signature classifier — Custom Docker build (Auto-built)",
+                build=BuildContext(
+                    path="environments",
+                    dockerfile_path="Dockerfile"
+                )
+            )
+            registered_env = ml_client.environments.create_or_update(env)
+            env_versioned = f"azureml:{env_name}:{registered_env.version}"
+            print(f"✅ Successfully registered environment '{env_name}' version {registered_env.version}")
 
     run_id = submit_training_job(ml_client, cfg, dataset_uri, env_versioned, args)
     metrics = wait_for_job(ml_client, run_id)
