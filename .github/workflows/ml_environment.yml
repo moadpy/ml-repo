@@ -89,6 +89,9 @@ jobs:
             az acr update --name $ACR_NAME --public-network-enabled true
           fi
 
+          echo "Waiting 45 seconds for Azure network security rules to fully propagate..."
+          sleep 45
+
       - name: Register Environment in Azure ML
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
